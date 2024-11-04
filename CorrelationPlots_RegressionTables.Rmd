@@ -1,0 +1,368 @@
+---
+title: "CorrelationPlots and Regression tables"
+output:
+  pdf_document: default
+  html_notebook: default
+---
+
+```{r}
+df_all <- df_plot %>% filter(complete.cases(LetAbilitySS)) %>% filter(complete.cases(pseAbilitySS))  %>% filter (complete.cases(MPabilitySS))  %>% filter(complete.cases(reading_outcome1)) 
+
+df_plot_EO <- df_all %>% filter(cELStatus == "EO")
+df_plot_EL <- df_all %>% filter(cELStatus == "EL")
+
+sample_sizesEO <- df_plot_EO %>%
+group_by (grade) %>% filter(complete.cases(LetAbilitySS)) %>% 
+summarise(n = n())
+
+sample_sizesEL <- df_plot_EL %>%
+group_by (grade) %>% filter(complete.cases(LetAbilitySS)) %>% 
+summarise(n = n())
+
+fig2a<- ggplot(data = df_all, aes(x = LetAbilitySS, y = reading_outcome1)) +
+  ylab("Reading outcome (LWI) ") + xlab("MEP-L (ø)") + 
+ geom_point(aes(color = cELStatus), size = 2, alpha = .6) +
+  #stat_smooth(method = lm, se = TRUE, color = "paleturquoise4") +
+  #    stat_cor(cor.coef.name="r",cor.coef.size =10, size = 4,lable.x=-3, label.y= 155) +
+  stat_smooth(data = df_plot_EL, method = lm, se = TRUE, color ="darkslategray", alpha=0.2) +
+      stat_cor(data = df_plot_EL,cor.coef.name="r",cor.coef.size =8, size = 5, color ="darkslategray")+
+   stat_smooth(data = df_plot_EO, method = lm, se = TRUE,color ="ivory4", alpha=0.2) +
+      stat_cor(data = df_plot_EO,cor.coef.name="r",cor.coef.size =8 , size = 5, color ="ivory4", lable.x=-3, label.y= 155)+
+  font("xlab",size = 24, family = "Helvetica")+ font("ylab",size = 24, family = "Helvetica")+
+  font("x.text",size = 18, family = "Helvetica")+font("y.text",size = 18, family = "Helvetica")+
+  
+coord_cartesian(ylim = c(35, 160)) + 
+  geom_text(data = sample_sizesEO, aes(label = paste("n =", n)),
+              x = -2, y = 38, size = 5,color ="ivory4" ) + 
+  geom_text(data = sample_sizesEL, aes(label = paste("n =", n)),
+              x = 1, y = 38, size = 5, color ="darkslategray") +
+  scale_color_manual(values = c( "darkslategray", "ivory4"),breaks = c("EL", "EO"), 
+                     labels = c("Spanish", "English"))+  
+  theme_pubr()+ theme( text = element_text(size = 18)) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), strip.text = element_text(size = 20)) + 
+  facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1",
+    "2" = "2"))) + theme(legend.position = "none") 
+fig2a 
+
+
+```
+```{r}
+sample_sizesEO <- df_plot_EO %>%
+group_by (grade) %>% filter(complete.cases(pseAbilitySS)) %>% 
+summarise(n = n())
+
+sample_sizesEL <- df_plot_EL %>%
+group_by (grade) %>% filter(complete.cases(pseAbilitySS)) %>% 
+summarise(n = n())
+
+fig2b<- ggplot(data = df_all, aes(x = pseAbilitySS, y = reading_outcome1)) +
+  ylab("WCJ (LWI) ") + xlab("MEP-P (ø)") + 
+ geom_point(aes(color = cELStatus), size = 2, alpha = .6) +
+  #stat_smooth(method = lm, se = TRUE, color = "paleturquoise4") +
+  #    stat_cor(cor.coef.name="r",cor.coef.size =10, size = 4, lable.x=-3, label.y= 155) +
+  stat_smooth(data = df_plot_EL, method = lm, se = TRUE, color ="darkslategray", alpha=0.2) +
+      stat_cor(data = df_plot_EL,cor.coef.name="r",cor.coef.size =8, size = 5, color ="darkslategray")+
+   stat_smooth(data = df_plot_EO, method = lm, se = TRUE,color ="ivory4", alpha=0.2) +
+      stat_cor(data = df_plot_EO,cor.coef.name="r",cor.coef.size =8 , size = 5, color ="ivory4", lable.x=-3, label.y= 155)+
+  font("xlab",size = 24, family = "Helvetica")+ font("ylab",size = 24, family = "Helvetica")+
+  font("x.text",size = 18, family = "Helvetica")+font("y.text",size = 18, family = "Helvetica")+ 
+   coord_cartesian(ylim = c(35, 160)) + 
+  geom_text(data = sample_sizesEO, aes(label = paste("n =", n)),
+              x = -2, y = 38, size = 5,color ="ivory4" ) + 
+  geom_text(data = sample_sizesEL, aes(label = paste("n =", n)),
+              x = 1, y = 38, size = 5, color ="darkslategray") +
+  scale_color_manual(values = c( "darkslategray", "ivory4"),breaks = c("EL", "EO"), 
+                     labels = c("Spanish", "English"))+  
+  theme_pubr(legend = "none")  + theme( text = element_text(size = 18)) +theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), strip.text = element_text(size = 20)) + 
+  facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1",
+    "2" = "2"))) 
+
+fig2b
+```
+```{r}
+sample_sizesEO <- df_plot_EO %>%
+group_by (grade) %>% filter(complete.cases(MPabilitySS)) %>% 
+summarise(n = n())
+
+sample_sizesEL <- df_plot_EL %>%
+group_by (grade) %>% filter(complete.cases(MPabilitySS)) %>% 
+summarise(n = n())
+
+fig2c<- ggplot(data = df_all, aes(x = MPabilitySS, y = reading_outcome1)) +
+  ylab("WCJ (LWI) ") + xlab("Motion (ø)") + 
+ geom_point(aes(color = cELStatus), size = 2, alpha = .6) +
+  #stat_smooth(method = lm, se = TRUE, color = "paleturquoise4") +
+  #    stat_cor(cor.coef.name="r",cor.coef.size =10, size = 4, lable.x=-3, label.y= 155) +
+  stat_smooth(data = df_plot_EL, method = lm, se = TRUE, color ="darkslategray") +
+      stat_cor(data = df_plot_EL,cor.coef.name="r",cor.coef.size =8, size = 5, color ="darkslategray")+
+   stat_smooth(data = df_plot_EO, method = lm, se = TRUE,color ="ivory4") +
+      stat_cor(data = df_plot_EO,cor.coef.name="r",cor.coef.size =8 , size = 5, color ="ivory4", lable.x=-3, label.y= 155)+
+  font("xlab",size = 24, family = "Helvetica")+ font("ylab",size = 24, family = "Helvetica")+
+  font("x.text",size = 18, family = "Helvetica")+font("y.text",size = 18, family = "Helvetica")+ 
+  facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1",
+    "2" = "2"))) +  
+  geom_text(data = sample_sizesEO, aes(label = paste("n =", n)),
+              x = -2, y = 38, size = 5,color ="ivory4" ) + 
+  geom_text(data = sample_sizesEL, aes(label = paste("n =", n)),
+              x = 1, y = 38, size = 5, color ="darkslategray") +
+  scale_color_manual(values = c( "darkslategray", "ivory4"),breaks = c("EL", "EO"), 
+                     labels = c("Spanish", "English"))+  
+  theme_pubr(legend = "top") + theme( text = element_text(size = 18))+ theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18),  strip.text = element_text(size = 20), legend.text = element_text(size=25))+
+coord_cartesian(ylim = c(35, 160))
+fig2c
+```
+
+JUST REPORT RESULTS ACROSS GRADE FIRST! 
+
+Fit Linear model and guide the figures to show based on the linear models 
+
+```{r results= 'asis'}
+
+
+df_all <- df_plot  %>% filter(complete.cases(LetAbilitySS)) %>% filter(complete.cases(pseAbilitySS))  %>% filter (complete.cases(MPabilitySS))  %>% filter(complete.cases(reading_outcome1))
+
+cor.test(df_all$LetAbilitySS,df_all$pseAbilitySS)
+cor.test(df_all$LetAbilitySS,df_all$MPabilitySS)
+
+# center the predictors 
+# Calculate the means of the predictor variables
+mean_LetAbilitySS <- mean(df_all$LetAbilitySS, na.rm = TRUE)
+mean_pseAbilitySS <- mean(df_all$pseAbilitySS, na.rm = TRUE)
+mean_MPabilitySS <- mean(df_all$MPabilitySS, na.rm = TRUE)
+
+# Center the predictor variables by subtracting the means
+df_all$LetAbilitySS_centered <- df_all$LetAbilitySS - mean_LetAbilitySS
+df_all$pseAbilitySS_centered <- df_all$pseAbilitySS - mean_pseAbilitySS
+df_all$MPabilitySS_centered <- df_all$MPabilitySS - mean_MPabilitySS
+
+# Zscore them 
+df_all$LetAbilitySS_z <- scale(df_all$LetAbilitySS, center = TRUE, scale = TRUE)
+df_all$pseAbilitySS_z <- scale(df_all$pseAbilitySS, center = TRUE, scale = TRUE)
+df_all$MPabilitySS_z <- scale(df_all$MPabilitySS, center = TRUE, scale = TRUE)
+df_all$reading_outcome1_z <- scale(df_all$reading_outcome1, center = TRUE, scale = TRUE)
+
+df_K <- df_all %>% filter(grade == 0) 
+df_1 <- df_all %>% filter(grade == 1) 
+
+#1. What % of variance in reading outcome measures do the visual measures explain in each grade ?
+baseModel_K <- lm(reading_outcome1 ~ cProxySES + cELStatus, df_K)
+summary(baseModel_K)
+
+baseModel_1 <- lm(reading_outcome1 ~ cProxySES * cELStatus, df_1)
+summary(baseModel_1)
+
+## first report if each visual measure is a significant predictor 
+visual_MepL <- lm(reading_outcome1_z ~ LetAbilitySS_z , df_K)
+summary(visual_MepL)
+
+visual_MepP <- lm(reading_outcome1_z ~ pseAbilitySS_z , df_K)
+summary(visual_MepP)
+
+visual_Motion <- lm(reading_outcome1_z ~ MPabilitySS_z , df_K)
+summary(visual_Motion)
+KG_Visual <- lm(reading_outcome1_z ~ LetAbilitySS_z + pseAbilitySS_z + MPabilitySS_z , df_K)
+summary(KG_Visual)
+
+KG_Visual_primLang <- lm(reading_outcome1_z ~  LetAbilitySS_z*cELStatus + pseAbilitySS_z*cELStatus  + MPabilitySS_z * cELStatus  , df_K)
+summary(KG_Visual_primLang)
+
+anova(KG_Visual,KG_Visual_primLang)
+
+KG_Visual_nonAlpha <- lm(reading_outcome1_z ~  pseAbilitySS_z + MPabilitySS_z , df_K)
+summary(KG_Visual_nonAlpha)
+### Across both grades 
+visual_MepL1 <- lm(reading_outcome1_z ~ LetAbilitySS_z , df_1)
+summary(visual_MepL1)
+
+visual_Mep1 <- lm(reading_outcome1_z ~ pseAbilitySS_z , df_1)
+summary(visual_Mep1)
+
+visual_Motion1 <- lm(reading_outcome1_z ~ MPabilitySS_z , df_1)
+summary(visual_Motion1)
+
+G1_Visual <- lm(reading_outcome1_z ~ LetAbilitySS_z + pseAbilitySS_z + MPabilitySS_z , df_1)
+summary(G1_Visual)
+
+G1_Visual_primLang <- lm(reading_outcome1_z ~  LetAbilitySS_z*cELStatus + pseAbilitySS_z*cELStatus  + MPabilitySS_z * cELStatus  , df_1)
+summary(G1_Visual_primLang)
+
+anova(G1_Visual,G1_Visual_primLang)
+
+G1_Visual_nonAlpha <- lm(reading_outcome1_z ~  pseAbilitySS_z + MPabilitySS_z , df_1)
+summary(G1_Visual_nonAlpha)
+
+#### FRPM -----
+
+df_K <- df_all  %>% filter(cProxySES != "NotReported") %>% filter(grade == 0)
+KG_Visual <- lm(reading_outcome1_z ~  LetAbilitySS_z+ pseAbilitySS_z + MPabilitySS_z , df_K)
+summary(KG_Visual)
+KG_Visual_Eligible <- lm(reading_outcome1_z ~ LetAbilitySS_z* cProxySES+ pseAbilitySS_z*cProxySES + MPabilitySS_z* cProxySES , df_K)
+summary(KG_Visual_Eligible)
+
+anova(KG_Visual,KG_Visual_Eligible)
+
+#-----G1 FRPM-----
+df_1 <- df_all %>% filter(cProxySES != "NotReported") %>% filter(grade == 1)
+G1_Visual <- lm(reading_outcome1_z ~  pseAbilitySS_z + MPabilitySS_z , df_1)
+summary(G1_Visual)
+G1_Visual_Eligible <- lm(reading_outcome1_z ~  LetAbilitySS_z * cProxySES + pseAbilitySS_z * cProxySES + MPabilitySS_z * cProxySES , df_1)
+summary(G1_Visual_Eligible)
+
+anova(G1_Visual,G1_Visual_Eligible)
+
+
+# G1 base model
+G1_Visual <- lm(reading_outcome1_z ~  LetAbilitySS_z + pseAbilitySS_z + MPabilitySS_z , df_1)
+summary(G1_Visual)
+
+G1_Visual_primLang <- lm(reading_outcome1_z ~  LetAbilitySS_z* cELStatus + pseAbilitySS_z* cELStatus  + MPabilitySS_z* cELStatus  , df_1)
+summary(G1_Visual_primLang)
+
+#G2_Visual <- lm(reading_outcome ~ LetAbilitySS  + pseAbilitySS + MPabilitySS, df_2)
+#summary(G2_Visual)
+
+
+
+KG_mepl_Eligible <- lm(reading_outcome1 ~ LetAbilitySS_centered * cProxySES  , df_K)
+summary(KG_mepl_Eligible)
+KG_mepp_Eligible <- lm(reading_outcome1 ~ pseAbilitySS_centered * cProxySES  , df_K)
+summary(KG_mepp_Eligible)
+KG_motion_Eligible <- lm(reading_outcome1 ~ MPabilitySS_centered * cProxySES  , df_K)
+summary(KG_motion_Eligible)
+
+G1_mepl_Eligible <- lm(reading_outcome1 ~ LetAbilitySS_centered * cProxySES  , df_1)
+summary(G1_mepl_Eligible)
+G1_mepp_Eligible <- lm(reading_outcome1 ~ pseAbilitySS_centered * cProxySES  , df_1)
+summary(G1_mepp_Eligible)
+G1_motion_Eligible <- lm(reading_outcome1 ~ MPabilitySS_centered * cProxySES  , df_1)
+summary(G1_motion_Eligible)
+
+```
+```{r}
+df_plot <- df_plot %>% filter(cProxySES != "NotReported") %>% filter(!is.na(cProxySES))
+df_plot_eligible <- df_plot %>% filter(cProxySES == "Eligible") 
+df_plot_Ineligible <- df_plot %>% filter(cProxySES == "Ineligible") 
+
+# MEP-LET
+sample_sizesELi <- df_plot_eligible %>%
+group_by (grade) %>% filter(cProxySES == "Eligible") %>% 
+summarise(n = n())
+
+sample_sizesinELi <- df_plot_Ineligible %>%
+group_by (grade) %>% filter(cProxySES == "Ineligible") %>% 
+summarise(n = n())
+
+fig3a<- ggplot(data = df_plot, aes(x = LetAbilitySS, y = reading_outcome1)) +
+  ylab("Reading outcome (LWI) ") + xlab("MEP-L (ø)") + 
+ geom_point(aes(color = cProxySES), size = 2, alpha = .5) +
+  #stat_smooth(method = lm, se = TRUE, color = "paleturquoise3") +
+   #   stat_cor(cor.coef.name="r",cor.coef.size =10, size = 6) +
+  stat_smooth(data = df_plot_eligible, method = lm, se = TRUE, color ="skyblue") +
+      stat_cor(data = df_plot_eligible,cor.coef.name="r", size =5, color ="skyblue3")+
+   stat_smooth(data = df_plot_Ineligible, method = lm, se = TRUE,color ="skyblue4", alpha=0.2) +
+      stat_cor(data = df_plot_Ineligible,cor.coef.name="r", size = 5, color ="skyblue4", lable.x=-3, label.y= 155)+
+  font("xlab",size = 24, family = "Helvetica")+ font("ylab",size = 24, family = "Helvetica")+
+  font("x.text",size = 18, family = "Helvetica")+font("y.text",size = 18, family = "Helvetica")+theme(legend.position = "top")+ 
+  facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1")))  
+ fig3a <- fig3a+  geom_text(data = sample_sizesELi, aes(label = paste("n =", n)),
+              x = -2, y = 40, size = 5,color ="skyblue3" ) + 
+  geom_text(data = sample_sizesinELi, aes(label = paste("n =", n)),
+              x = 1, y = 40, size = 5, color ="skyblue4") + coord_cartesian(ylim = c(35, 160)) +
+  scale_color_manual(values = c("skyblue","skyblue4")) + #,breaks = c("EL", "EO"), 
+  #                   labels = c("Spanish", "English"))+  
+  theme_pubr()  + theme( text = element_text(size = 18),panel.background = element_rect(fill = "white")) + theme( text = element_text(size = 18)) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "top", strip.text = element_text(size = 20), legend.text = element_text(size=25))
+
+
+fig3a
+
+```
+```{r}
+df_plot_eligible <- df_plot %>% filter(proxy_SES == "Eligible")
+df_plot_Ineligible <- df_plot %>% filter(proxy_SES == "Ineligible")
+
+# MEP-Pse
+sample_sizesELi <- df_plot_eligible %>%
+group_by (grade) %>% filter(complete.cases(pseAbilitySS)) %>% 
+summarise(n = n())
+
+sample_sizesinELi <- df_plot_Ineligible %>%
+group_by (grade) %>% filter(complete.cases(pseAbilitySS)) %>% 
+summarise(n = n())
+
+fig3b <- ggplot(data = df_plot, aes(x = pseAbilitySS, y = reading_outcome1)) +
+  ylab("WCJ (LWI) ") + xlab("MEP-P (ø)") + 
+ geom_point(aes(color = proxy_SES), size = 2, alpha = .5) +
+  #stat_smooth(method = lm, se = TRUE, color = "paleturquoise3") +
+   #   stat_cor(cor.coef.name="r",cor.coef.size =10, size = 6) +
+  stat_smooth(data = df_plot_eligible, method = lm, se = TRUE, color ="skyblue") +
+      stat_cor(data = df_plot_eligible,cor.coef.name="r",cor.coef.size =8, size =5, color ="skyblue3")+
+   stat_smooth(data = df_plot_Ineligible, method = lm, se = TRUE,color ="skyblue4", alpha=0.2) +
+      stat_cor(data = df_plot_Ineligible,cor.coef.name="r",cor.coef.size =8 , size = 5, color ="skyblue4", lable.x=-3, label.y= 155)+
+  font("xlab",size = 24, family = "Helvetica")+ font("ylab",size = 24, family = "Helvetica")+
+  font("x.text",size = 18, family = "Helvetica")+font("y.text",size = 18, family = "Helvetica")+theme(legend.position = "none")+ 
+  facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1",
+    "2" = "2"))) +  
+  geom_text(data = sample_sizesELi, aes(label = paste("n =", n)),
+              x = -2, y = 40, size = 5,color ="skyblue3" ) + 
+  geom_text(data = sample_sizesinELi, aes(label = paste("n =", n)),
+              x = 1, y = 40, size = 5, color ="skyblue4") + coord_cartesian(ylim = c(35, 160)) +
+  scale_color_manual(values = c("skyblue","skyblue4")) + #,breaks = c("EL", "EO"), 
+  #                   labels = c("Spanish", "English"))+  
+  theme_pubr()  + theme( text = element_text(size = 18),panel.background = element_rect(fill = "white")) + theme( text = element_text(size = 18)) + theme(axis.text.x = element_text(size = 14),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 20))
+
+
+fig3b
+
+```
+```{r}
+
+# Motion
+sample_sizesELi <- df_plot_eligible %>%
+group_by (grade) %>% filter(complete.cases(MPabilitySS)) %>% 
+summarise(n = n())
+
+sample_sizesinELi <- df_plot_Ineligible %>%
+group_by (grade) %>% filter(complete.cases(MPabilitySS)) %>% 
+summarise(n = n())
+
+fig3c <- ggplot(data = df_plot, aes(x = MPabilitySS, y = reading_outcome1)) +
+  ylab("WCJ (LWI) ") + xlab("Motion (ø)") + 
+ geom_point(aes(color = proxy_SES), size = 2, alpha = .5) +
+  #stat_smooth(method = lm, se = TRUE, color = "paleturquoise3") +
+   #   stat_cor(cor.coef.name="r",cor.coef.size =10, size = 6) +
+  stat_smooth(data = df_plot_eligible, method = lm, se = TRUE, color ="skyblue") +
+      stat_cor(data = df_plot_eligible,cor.coef.name="r",cor.coef.size =8, size =5, color ="skyblue3")+
+   stat_smooth(data = df_plot_Ineligible, method = lm, se = TRUE,color ="skyblue4", alpha=0.2) +
+      stat_cor(data = df_plot_Ineligible,cor.coef.name="r",cor.coef.size =8 , size = 5, color ="skyblue4", lable.x=-3, label.y= 155)+
+  font("xlab",size = 24, family = "Helvetica")+ font("ylab",size = 24, family = "Helvetica")+
+  font("x.text",size = 18, family = "Helvetica")+font("y.text",size = 18, family = "Helvetica")+  coord_cartesian(ylim = c(35, 160)) + 
+  geom_text(data = sample_sizesELi, aes(label = paste("n =", n)),
+              x = -2, y = 40, size = 5,color ="skyblue3" ) + 
+  geom_text(data = sample_sizesinELi, aes(label = paste("n =", n)),
+              x = 1, y = 40, size = 5, color ="skyblue4") +
+  scale_color_manual(values = c("skyblue","skyblue4")) + #,breaks = c("EL", "EO"), 
+  #                   labels = c("Spanish", "English"))+  
+  theme_pubr(legend = "none")  + theme( text = element_text(size = 18),panel.background = element_rect(fill = "white")) + theme( text = element_text(size = 18)) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 14),strip.text = element_text(size=18)) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1",
+    "2" = "2"))) 
+
+
+fig3c
+
+```
