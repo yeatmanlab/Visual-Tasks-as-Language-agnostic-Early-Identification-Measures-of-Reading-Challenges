@@ -1,0 +1,408 @@
+---
+title: "Figure1-FRPM"
+output: html_notebook
+---
+
+All component subplots in Figure 2 
+
+```{r}
+library(rstatix)
+library(plotrix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(psych)
+library(stargazer)
+library(gtsummary)
+library(ggpubr)
+library(ggExtra)
+library(cutpointr)
+library(lme4)
+library(dplyr)
+library(ggplot2)
+library(effsize)
+```
+
+
+
+```{r}
+source('~/Documents/REDCapR.R')
+
+df_ktea = df %>% filter(redcap_event_name == "spring2023_arm_1") 
+df_ktea <- df_ktea %>% dplyr::select(c(student_tracking_id, wcj_lwi,wcj_lwi_ss,wcj_spelling,wcj_spelling_ss,wcj_wa,wcj_wa_ss, wcj_srt, wcj_srt_ss, wcm_lwi, wcm_lwi_ss, age_month, grade, frpm, school,fam_income, langflu,rptglng))
+
+df_ngs <- df %>% filter(redcap_event_name == "winter2023_arm_1") 
+df_ngs<- df_ngs %>% dplyr::select(c( student_tracking_id, ble_ucat,del_ucat,evo_ucat, rvo_ucat, nre_ucat, wre_ucat, srt_ucat, nwr_ucat, lnc, lco, rao, dgs, lsi_ucat,lco))
+
+#Read all the dfs with demographic and reading outcome measures 
+df_demo_LET_Available <- read.csv("/Users/maha10/Library/CloudStorage/GoogleDrive-maha10@stanford.edu/My Drive/VisualMeasuresAsLanguageAgnosticScreeners/df_demo_LET_Available_May22.csv")
+df_demo_PSE_Available <- read.csv("/Users/maha10/Library/CloudStorage/GoogleDrive-maha10@stanford.edu/My Drive/VisualMeasuresAsLanguageAgnosticScreeners/df_demo_PSE_Available_May22.csv")
+df_demo_GMC_Available <- read.csv("/Users/maha10/Library/CloudStorage/GoogleDrive-maha10@stanford.edu/My Drive/VisualMeasuresAsLanguageAgnosticScreeners/df_demo_GMC_Available_May22.csv") 
+
+
+let <- df_demo_LET_Available%>% dplyr::select(student_tracking_id, LetAbilitySS, LetAbility, ELStatus,grade, proxy_SES,wcj_lwi_ss, wcj_wa_ss,wcj_spelling_ss, wcm_lwi_ss, ielpac_score, frpm, fam_income,clean_school_id,rptglng) %>%
+                    mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+                    mutate(ELStatusMod = case_when(ELStatus == "EL" & !is.na(wcm_lwi_ss) ~ "EL_VS",
+                                                                 ELStatus == "EL" & is.na(wcm_lwi_ss)  ~ "EL",
+                                                                 ELStatus == "EO" ~ "EO")) %>% 
+                    mutate(reading_outcome1 = wcj_lwi_ss) %>% # all get WCJ
+                    mutate(reading_outcome2 = if_else(ELStatusMod == "EL_VS", wcm_lwi_ss, wcj_lwi_ss)) %>% # ELs get WCM - Here only a subset of 210 kids 
+                    mutate(reading_outcome3 = if_else(ELStatusMod == "EL_VS", pmax(wcm_lwi_ss, wcj_lwi_ss, na.rm = TRUE), wcj_lwi_ss)) %>% # greater of the two measures same subset 
+                    mutate(reading_outcome4  = if_else(ELStatusMod == "EO",wcj_lwi_ss, if_else(ielpac_score <= 350, wcm_lwi_ss, wcj_lwi_ss))) %>% 
+                    mutate(reading_outcome  = if_else(grade == 0, if_else(is.na(wcm_lwi_ss), wcj_lwi_ss, if_else((wcj_lwi_ss > wcm_lwi_ss), wcj_lwi_ss,  wcm_lwi_ss)), wcj_lwi_ss)) %>%                       filter(grade!=2) %>% mutate(ielpacScoreRange = case_when(ielpac_score <=250 ~ "Low",
+                                      ielpac_score > 250  & ielpac_score <= 400 ~ "Mod",
+                                      ielpac_score > 400 ~ "High")) %>%  
+                    mutate(frpm_eligibility = case_when(frpm == 55 ~ "NotReported", 
+                                                        frpm == 0 ~ "Ineligible",
+                                  frpm == 1 |2| 3 ~ "Eligible",
+                                  frpm == 1 | fam_income == "R" ~ "Eligible",
+                                  frpm == 2 | fam_income == "F" ~ "Eligible",
+                                  #frpm == 3 ~ "Eligible_notSpecified",
+                                  fam_income == "N" ~ "Ineligible"))
+
+pse <- df_demo_PSE_Available %>% dplyr::select(student_tracking_id, pseAbilitySS, pseAbility, ELStatus,grade, proxy_SES,wcj_lwi_ss, wcj_wa_ss,wcj_spelling_ss, wcm_lwi_ss, ielpac_score,frpm, fam_income,clean_school_id,rptglng) %>%
+                     mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+                    mutate(ELStatusMod = case_when(ELStatus == "EL" & !is.na(wcm_lwi_ss) ~ "EL_VS",
+                                                                 ELStatus == "EL" & is.na(wcm_lwi_ss)  ~ "EL",
+                                                                 ELStatus == "EO" ~ "EO")) %>% 
+                    mutate(reading_outcome1 = wcj_lwi_ss) %>% # all get WCJ
+                    mutate(reading_outcome2 = if_else(ELStatusMod == "EL_VS", wcm_lwi_ss, wcj_lwi_ss)) %>% # ELs get WCM - Here only a subset of 210 kids 
+                    mutate(reading_outcome3 = if_else(ELStatusMod == "EL_VS", pmax(wcm_lwi_ss, wcj_lwi_ss, na.rm = TRUE), wcj_lwi_ss)) %>% # greater of the two measures same subset 
+                    mutate(reading_outcome4  = if_else(ELStatusMod == "EO",wcj_lwi_ss, if_else(ielpac_score <= 350, wcm_lwi_ss, wcj_lwi_ss))) %>%
+                    mutate(reading_outcome  = if_else(grade == 0, if_else(is.na(wcm_lwi_ss), wcj_lwi_ss, if_else((wcj_lwi_ss > wcm_lwi_ss), wcj_lwi_ss,  wcm_lwi_ss)), wcj_lwi_ss)) %>%                       filter(grade!=2) %>% mutate(ielpacScoreRange = case_when(ielpac_score <=250 ~ "Low",
+                                      ielpac_score > 250  & ielpac_score <= 400 ~ "Mod",
+                                      ielpac_score > 400 ~ "High")) %>%  
+                    mutate(frpm_eligibility = case_when(frpm == 0 ~ "Ineligible",
+                                  frpm == 55 ~ "NotReported",
+                                  frpm == 1 |2| 3 ~ "Eligible",
+                                  frpm == 1 | fam_income == "R" ~ "Eligible",
+                                  frpm == 2 | fam_income == "F" ~ "Eligible",
+                                  #frpm == 3 ~ "Eligible_notSpecified",
+                                  fam_income == "N" ~ "Ineligible"))
+
+
+GMC <- df_demo_GMC_Available %>% dplyr::select(student_tracking_id, MPabilitySS, MPability.x, ELStatus,grade, proxy_SES, wcj_lwi_ss, wcj_wa_ss,wcj_spelling_ss, wcm_lwi_ss,ielpac_score, frpm,fam_income,clean_school_id.x,rptglng) %>% 
+                    mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+                    mutate(ELStatusMod = case_when(ELStatus == "EL" & !is.na(wcm_lwi_ss) ~ "EL_VS",
+                                                                 ELStatus == "EL" & is.na(wcm_lwi_ss)  ~ "EL",
+                                                                 ELStatus == "EO" ~ "EO")) %>% 
+                    mutate(reading_outcome1 = wcj_lwi_ss) %>% # all get WCJ
+                    mutate(reading_outcome2 = if_else(ELStatusMod == "EL_VS", wcm_lwi_ss, wcj_lwi_ss)) %>% # ELs get WCM - Here only a subset of 210 kids 
+                    mutate(reading_outcome3 = if_else(ELStatusMod == "EL_VS", pmax(wcm_lwi_ss, wcj_lwi_ss, na.rm = TRUE), wcj_lwi_ss)) %>% # greater of the two measures same subset 
+                    mutate(reading_outcome4  = if_else(ELStatusMod == "EO",wcj_lwi_ss, if_else(ielpac_score <= 350, wcm_lwi_ss, wcj_lwi_ss))) %>%
+                    mutate(reading_outcome  = if_else(grade == 0, if_else(is.na(wcm_lwi_ss), wcj_lwi_ss, if_else((wcj_lwi_ss > wcm_lwi_ss), wcj_lwi_ss,  wcm_lwi_ss)), wcj_lwi_ss)) %>%                       filter(grade!=2) %>% mutate(ielpacScoreRange = case_when(ielpac_score <=250 ~ "Low",
+                                      ielpac_score > 250  & ielpac_score <= 400 ~ "Mod",
+                                      ielpac_score > 400 ~ "High")) %>%  
+                   mutate(frpm_eligibility = case_when(frpm == 0 ~ "Ineligible",
+                                  frpm == 55 ~ "NotReported",
+                                  frpm == 1 |2| 3 ~ "Eligible",
+                                  frpm == 1 | fam_income == "R" ~ "Eligible",
+                                  frpm == 2 | fam_income == "F" ~ "Eligible",
+                                  #frpm == 3 ~ "Eligible_notSpecified",
+                                  fam_income == "N" ~ "Ineligible"))
+
+
+
+
+
+# Merge the repos with NGS data
+let_NGS <- merge(let,df_ngs, by = "student_tracking_id")
+pse_NGS <- merge(pse,df_ngs, by = "student_tracking_id")
+gmc_NGS <- merge(GMC,df_ngs, by = "student_tracking_id")
+gmc_NGS <- rename(gmc_NGS, clean_school_id = clean_school_id.x)
+
+allVisual<- full_join(let, pse,  by = "student_tracking_id")
+allVisual<- full_join(allVisual,GMC,by = "student_tracking_id")
+
+allVisual_NGS<- merge(allVisual,df_ngs,  by = "student_tracking_id")
+                    
+allVisual_NGS <- allVisual_NGS %>% mutate(across(c(ble_ucat,lnc,rao,dgs, nwr_ucat,srt_ucat,nre_ucat,wre_ucat,nwr_ucat,del_ucat,ble_ucat)))
+allVisual_NGS<- rename(allVisual_NGS, clean_school_id = clean_school_id.x.x)
+CDE_data <- read.csv("/Users/maha10/Multitudes/Feb14th/CDE_data.csv")
+CDE_data <- rename(CDE_data,clean_school_id = School.Airport.Code)
+
+let_NGS <- merge(let_NGS, CDE_data, by = "clean_school_id")
+pse_NGS <- merge(pse_NGS, CDE_data, by = "clean_school_id")
+gmc_NGS <- left_join(gmc_NGS, CDE_data, by = "clean_school_id")
+df_all <- allVisual_NGS
+df_all <- merge(allVisual_NGS, CDE_data, by = "clean_school_id")
+df_all <- df_all %>% mutate(cgrade = coalesce(grade, grade.x, grade.y)) %>% mutate(across(c(ble_ucat,lnc,rao,dgs, nwr_ucat,srt_ucat,nre_ucat,wre_ucat,nwr_ucat,del_ucat,ble_ucat), as.numeric))
+
+df_all <- df_all %>% mutate(cELStatus = coalesce(ELStatus.x, ELStatus.y, ELStatus))
+
+df_all <- df_all %>% mutate(school = coalesce(clean_school_id.x.y, clean_school_id.y, clean_school_id))
+
+df_data <- df_all %>% group_by(cgrade, school) %>% mutate(across(c(ble_ucat,lnc,rao,dgs, nwr_ucat,srt_ucat,nre_ucat,wre_ucat,nwr_ucat,del_ucat,ble_ucat), as.numeric)) %>% mutate(cProxySES = coalesce(proxy_SES.x, proxy_SES.y, proxy_SES)) %>% mutate(cELStatus = coalesce(ELStatus.x, ELStatus.y, ELStatus)) %>% mutate(cELStatusMod = coalesce(ELStatusMod.x, ELStatusMod.y, ELStatusMod)) %>% filter(cProxySES != "NotReported")
+
+```
+#Prepare for all available NGS data 
+```{r}
+df_ngs <- left_join(df_ngs, df_ktea, by = "student_tracking_id")
+
+df_ngs <- df_ngs %>%
+  mutate(frpm = ifelse(is.na(frpm), 55, frpm)) %>%  
+  
+  mutate(proxy_SES = case_when(frpm == 55 ~ "NotReported", 
+                                                        frpm == 0 ~ "Ineligible",
+                                  frpm == 1 |2| 3 ~ "Eligible",
+                                   fam_income == "R" ~ "Eligible",
+                                   fam_income == "F" ~ "Eligible",
+                                  fam_income == "N" ~ "Ineligible")) %>%    
+  mutate(ELStatus = case_when(langflu =="IFEP" ~ "PEL", 
+                                          langflu =="RFEP" ~ "PEL",
+                                          langflu =="EL" & rptglng == 1 | langflu =="NA" & rptglng == 1 ~ "EL" ,
+                                          langflu =="EL" & rptglng > 1 | langflu =="NA" & rptglng > 1  ~ "EL_Others" ,
+                                          langflu =="EO" & rptglng == 0 | langflu =="NA" & rptglng == 0 | langflu =="EO" & rptglng == NA ~ "EO" )) %>% 
+  filter(ELStatus == "EO" | ELStatus == "EL" )  %>% filter(proxy_SES != "NotReported")
+
+df_Schools <- df_all %>% select(c(School.ID, clean_school_id))
+df_Schools <- rename(df_Schools,school =School.ID)
+df_ngs <- left_join(df_ngs, df_Schools, by = "school")
+df_ngs <- left_join(df_ngs, CDE_data, by = "clean_school_id")
+df_ngs$wcj_lwi_ss <- as.numeric(df_ngs$wcj_lwi_ss)
+df_ngs_split <- df_ngs %>%
+    group_by(clean_school_id, grade,proxy_SES) %>% summarize(n_students = n(),                 
+                                                    lnc_performance = median(lnc,na.rm=TRUE),
+                                                    rao_performance = median(rao,na.rm=TRUE),
+                                                    dgs_performance = median(dgs,na.rm=TRUE),
+                                                    srt_performance = median(srt_ucat,na.rm=TRUE),
+                                                    nre_performance = median(nre_ucat,na.rm=TRUE),
+                                                    wre_performance = median(wre_ucat,na.rm=TRUE),
+                                                    nwr_performance = median(nwr_ucat,na.rm=TRUE),
+                                                    del_performance = median(del_ucat,na.rm=TRUE),
+                                                    ble_performance = median(ble_ucat,na.rm=TRUE),
+                                                    readingOutcome  = median(wcj_lwi_ss, na.rm=TRUE),
+                                                    percent_frpm = median(Percent......Eligible.FRPM...K.12.,na.rm=TRUE))
+
+
+
+```
+
+```{r}
+# Calculate Cohen's d and Hedge's g for each measure
+measure_cols <- c("LetAbilitySS", "pseAbilitySS","MPabilitySS","lnc", "del_ucat", "rao", "dgs", "ble_ucat","srt_ucat","nwr_ucat","nre_ucat","wre_ucat","evo_ucat", "readingOutcome", "wcj_spelling_ss","wcj_wa_ss")
+measure_order <- c("LetAbilitySS", "pseAbilitySS","MPabilitySS","readingOutcome","wcj_spelling_ss","wcj_wa_ss", "nre_ucat","wre_ucat", "evo_ucat", "del_ucat","ble_ucat", "srt_ucat","nwr_ucat", "rao", "dgs", "lnc")
+
+df_all <- df_all %>% mutate(ProxySES = coalesce(proxy_SES, proxy_SES.x, proxy_SES.y)) %>% mutate(grade = coalesce(grade.x, grade.y, grade)) %>% mutate(readingOutcome = coalesce(wcj_lwi_ss, wcj_lwi_ss.x,wcj_lwi_ss.y)) %>% mutate(wcj_spelling_ss = coalesce(wcj_spelling_ss,wcj_spelling_ss.x,wcj_spelling_ss.y)) %>% mutate(wcj_wa_ss = coalesce(wcj_wa_ss, wcj_wa_ss.x,wcj_wa_ss.y))
+
+df_all$ProxySES <- factor (df_all$ProxySES)
+# Create an empty data frame to store the effect sizes
+effect_sizes <- data.frame(
+  measure = character(),
+  grade = character(),
+  cohens_d = numeric(),
+  sample_sizes_Eligible = numeric(),
+  sample_sizes_Ineligible =numeric(),
+   ci_low = numeric(),
+  ci_high = numeric()
+)
+df_this=data.frame()
+```
+
+```{r}
+library(vcmeta)
+# Loop through each grade
+df_all$grade <- as.factor(df_all$grade)
+df_all <- df_all %>% mutate(across())
+grades <- unique(df_all$grade)
+# Reorder grades to ensure "0" comes first
+grades <- factor(grades, levels = c("0", sort(as.character(grades[grades != "0"]))))
+   
+for (i in grades) {
+  df_grade <- df_all %>% filter(grade == i)
+# Loop through each measure
+  for (measure in measure_cols) {  
+   # Check if the measure is available for this grade
+    if (all(is.na(df_grade[[measure]]))) {
+      cat("Skipping", measure, "for grade", i, "as it's not available.\n")
+      next  # Skip to the next iteration of the loop
+    }
+  df_this <- df_grade %>%  select(c(paste(measure), ProxySES)) 
+  #df_this <- df_this %>% filter(ProxySES != "NotReported") 
+  # Create the formula correctly
+   formula <- as.formula(paste(measure, "~ ProxySES"))
+  # Calculate Cohen's d and Hedge's g for the current measure
+  cohens_d_value <- cohens_d(formula, data = df_this , hedges.correction =FALSE)
+  dummyA <- cohens_d_value$effsize[1]
+  aa <- as.numeric(stringr::str_extract(dummyA, "-?\\d+\\.\\d+"))
+  print(cohens_d_value)
+ # ci <- confint(cohens_d_value)
+ # hedges_g_value <- hedges_g(formula = formula, data = df_this)
+  SS <- df_this %>% filter(complete.cases(.)) %>%
+      group_by(ProxySES) %>% filter(ProxySES != "NotReported") %>%
+      summarize(n = n())
+  n1 <- SS$n[1]
+    n2 <- SS$n[2]
+     SE <- se.cohen(cohens_d_value$effsize[1], n1, n2)
+    # Add the effect sizes to the data frame
+    effect_sizes <- rbind(effect_sizes, data.frame(
+      measure = paste(measure),
+      grade = i,
+      cohens_d = aa,
+      sample_sizes_Eligible = n1,
+      sample_sizes_Ineligible = n2,
+      ci_low = aa - 1.96*SE[2],
+      ci_high = aa + 1.96*SE[2]
+    ))
+  }
+}
+effect_sizes$measure <- factor(effect_sizes$measure, levels = measure_order)
+effect_sizes$grade <- factor(effect_sizes$grade, levels = grades)
+
+# Create the plot
+ggplot(effect_sizes, aes(x = measure, y = cohens_d)) +
+  geom_point() +
+  geom_errorbar(aes(ymin = ci_low, ymax = ci_high), width = 0.2) +
+  labs(title = "Hedges' g with Confidence Intervals",
+       x = "Measure",
+       y = "Effect Size (Hedges' g)") + geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  ylim(-1.8, 1.2) + 
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) + geom_text(aes(label = paste("E=", sample_sizes_Eligible), y = 0.5),vjust = -10, angle = 0, size = 2.5) + geom_text(aes(label = paste("InE=", sample_sizes_Ineligible), y =-1.8),vjust = -10, angle = 0, size = 2.5)
+```
+
+```{r}
+# Combined plot using facet_grid
+# Ensure grades are ordered with "0" first
+effect_sizes$grade <- factor(effect_sizes$grade, levels = c("0", sort(as.character(grades[grades != "0"]))))
+# Define measure renaming mapping
+measure_renaming <- c(
+  "LetAbilitySS" = "MEP-L",
+  "pseAbilitySS" = "MEP-P",
+  "MPabilitySS" = "Motion",
+  "lnc" = "LNC",
+  "del_ucat" = "DEL",
+  "rao" = "RAO",
+  "dgs" = "DGS",
+  "ble_ucat" = "BLE",
+  "srt_ucat" = "SRT",
+  "nwr_ucat" = "NWR",
+  "nre_ucat" = "NRE",
+  "wre_ucat" = "WRE",
+  "evo_ucat" = "EVO",
+  "readingOutcome" = "WJ(LWI)",
+  "wcj_spelling_ss" = "WJ(Spell)",
+  "wcj_wa_ss" = "WJ(WA)"
+)
+measure_order <- c("MEP-L",
+  "MEP-P",
+  "Motion",
+  "WJ(LWI)",
+  "WJ(Spell)",
+  "WJ(WA)",
+   "LNC",
+   "DEL",
+   "RAO",
+  "DGS",
+  "BLE",
+  "SRT",
+   "NWR",
+   "NRE",
+   "WRE",
+  "EVO"
+)
+# Rename measure names in effect_sizes
+effect_sizes$measure <- recode(effect_sizes$measure, !!!measure_renaming)
+
+# Ensure correct order of measures
+effect_sizes$measure <- factor(effect_sizes$measure, levels = measure_order)
+
+ggplot(effect_sizes, aes(y = measure, x = cohens_d)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  xlim(-1.8, 1) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(angle = 0, hjust = 1, size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16),
+    strip.text = element_text(size = 14)
+  ) +
+  labs(title = "",
+       y = "",
+       x = "Effect Size (Cohen's d)") +
+  geom_text(aes(label = paste("E=", sample_sizes_Eligible), x = 0.5), hjust = -0.1, angle = 0, size = 2.5) +
+  geom_text(aes(label = paste("InE=", sample_sizes_Ineligible), x = -1.8), hjust = -0.1, angle = 0, size = 2.5) +
+  facet_grid(~grade,labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) 
+```
+
+```{r}
+
+effect_sizes <- read.csv("~/effect_size_EL.csv")
+# Combined plot using facet_grid
+# Ensure grades are ordered with "0" first
+effect_sizes$grade <- factor(effect_sizes$grade, levels = c("0", sort(as.character(grades[grades != "0"]))))
+# Define measure renaming mapping
+measure_renaming <- c(
+  "LetAbilitySS" = "MEP-L",
+  "pseAbilitySS" = "MEP-P",
+  "MPabilitySS" = "Motion",
+  "lnc.y" = "LNC",
+  "del_ucat.y" = "DEL",
+  "rao.y" = "RAO",
+  "dgs.y" = "DGS",
+  "ble_ucat.y" = "BLE",
+  "srt_ucat.y" = "SRT",
+  "nwr_ucat.y" = "NWR",
+  "nre_ucat.y" = "NRE",
+  "wre_ucat.y" = "WRE",
+  "evo_ucat.y" = "EVO",
+  "reading_outcome1" = "WJ(LWI)",
+  "wcj_spelling_ss" = "WJ(Spell)",
+  "wcj_wa_ss" = "WJ(WA)"
+)
+measure_order <- c("MEP-L",
+  "MEP-P",
+  "Motion",
+  "WJ(LWI)",
+  "WJ(Spell)",
+  "WJ(WA)",
+   "LNC",
+   "DEL",
+   "RAO",
+  "DGS",
+  "BLE",
+  "SRT",
+   "NWR",
+   "NRE",
+   "WRE",
+  "EVO"
+)
+# Rename measure names in effect_sizes
+effect_sizes$measure <- recode(effect_sizes$measure, !!!measure_renaming)
+
+# Ensure correct order of measures
+effect_sizes$measure <- factor(effect_sizes$measure, levels = measure_order)
+
+ggplot(effect_sizes, aes(y = measure, x = cohens_d)) +
+  geom_point() +
+  geom_errorbarh(aes(xmin = ci_low, xmax = ci_high), height = 0.2) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +
+  xlim(-1.8, 1) +
+  theme_bw() +
+  theme(
+    axis.text.y = element_text(angle = 0, hjust = 1, size = 12),
+    axis.text.x = element_text(size = 12),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 16),
+    strip.text = element_text(size = 14)
+  ) +
+  labs(title = "",
+       y = "Measure",
+       x = "Effect Size (Cohen's d)") +
+  geom_text(aes(label = paste("Spanish=", sample_sizes_EL), x = 0.5), hjust = -0.1, angle = 0, size = 2.2) +
+  geom_text(aes(label = paste("English=", sample_sizes_EO), x = -1.8), hjust = -0.1, angle = 0, size = 2.2) +
+  facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1")))
+```
+
+```{r}
+
+```
+
+
