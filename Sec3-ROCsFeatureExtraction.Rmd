@@ -1,0 +1,848 @@
+---
+title: "Sectioon3Results - Manuscript"
+output: html_notebook
+---
+
+```{r}
+#Load required libraries 
+library(rstatix)
+library(plotrix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(psych)
+library(stargazer)
+library(gtsummary)
+library(ggpubr)
+library(ggExtra)
+library(cutpointr)
+library(pROC)
+library(plotROC)
+
+library(randomForest)
+library(ggplot2)
+library(mice)
+```
+```{r include=FALSE}
+ # Boruta Processing
+  # =================
+  # from: https://stackoverflow.com/questions/73415232/how-to-use-ggplot2-to-plot-box-plots-from-borutas-results-in-r
+  process_the_Boruta_data <- function(x, whichShadow=c(FALSE,FALSE,FALSE),
+                                      colCode=c('green','yellow','red','blue', "darkslategray","ivory4" ),
+                                      col=NULL) {
+    if(is.null(x$ImpHistory))
+      stop('Importance history was not stored during the Boruta run.')
+    
+    #Removal of -Infs and conversion to a list
+    lz <- lapply(1:ncol(x$ImpHistory),
+                 function(i) x$ImpHistory[is.finite(x$ImpHistory[,i]),i])
+    colnames(x$ImpHistory) -> names(lz)
+    
+    #Selection of shadow meta-attributes
+    numShadow <- sum(whichShadow)
+    lz[c(rep(TRUE,length(x$finalDecision)),whichShadow)] -> lz
+    
+    generateCol<-function(x,colCode,col,numShadow){
+      #Checking arguments
+      if(is.null(col) & length(colCode)!=6)
+        stop('colCode should have 4 elements.')
+      #Generating col
+      if(is.null(col)){
+        rep(colCode[4],length(x$finalDecision)+numShadow)->cc
+        cc[c(x$finalDecision=='Confirmed',rep(FALSE,numShadow))]<-colCode[1]
+        cc[c(x$finalDecision=='Tentative',rep(FALSE,numShadow))]<-colCode[2]
+        cc[c(x$finalDecision=='Rejected',rep(FALSE,numShadow))]<-colCode[3]
+        col=cc
+      }
+      return(col)
+    }
+    
+    #Generating color vector
+    col <- generateCol(x, colCode, col, numShadow)
+     
+    #Ordering boxes due to attribute median importance
+    ii<-order(sapply(lz,stats::median))
+    lz[ii] -> lz
+    col <- col[ii]
+    lz_df <- do.call(rbind.data.frame, lz)
+    df <- as.data.frame(t(lz_df))
+    names(df) <- names(lz)
+    rownames(df) <- NULL
+    return(df)
+  }
+```
+```{r}
+#Linear models and correlation plots 
+#TRy to check how much these dfs over lap 
+
+
+df_plot <- read.csv("~/df_plot.csv")
+
+```
+
+#Risk Classification 
+  1. Look at how a model with a language screener alone performs and compare that to a model with language + visual screener
+
+```{r}
+
+set.seed(112)
+percentile_20 <- quantile(df_plot$wcj_lwi_ss, probs = 0.2, na.rm = TRUE)
+percentile_20
+df_risk <- df_plot %>%
+    mutate(risk = ifelse(wcj_lwi_ss <= percentile_20, 1, 0))
+
+
+```
+#Because sample size is so small we could try to report the cross validation metrics
+
+## Choosing LOO-CV that seems the best model given the pros and cons on the data: 
+Write out the reasons here:
+1. We want to make sure that non-linearity and interactions are captured best - that is why we are trying out booth random forests and LOOCV
+
+```{r}
+# Kinder 
+df_risk_K <- df_risk %>% filter(grade ==0) 
+# G1
+df_risk_1 <- df_risk %>% filter(grade ==1) 
+# Load required libraries
+library(caret)
+library(pROC)
+
+# For "Risk" Prediction
+# models: random forest vs. logistic regression 
+# LOO-CV metric comparisons 
+# ROC curve comparison from LOO-CV predictions
+# Feature importance vs. standardized coefficients
+
+# Function to perform LOOCV for a given model
+perform_loocv <- function(data, formula) {
+  n <- nrow(data)
+  predictions <- numeric(n)
+  
+  for (i in 1:n) {
+    # Split data into training (all but one) and test (one)
+    train <- data[-i, ]
+    test <- data[i, ]
+    
+    # Fit model
+    model <- glm(formula, data = train, family = binomial)
+    
+    # Predict on held-out sample
+    predictions[i] <- predict(model, newdata = test, type = "response")
+  }
+  
+  # Calculate metrics
+  actual <- data$risk  # Assuming 'risk' is your binary outcome variable
+  roc_obj <- roc(actual, predictions)
+  auc <- auc(roc_obj)
+  
+  # Find optimal threshold
+  ####optimal_threshold <- coords(roc_obj, "best", ret = "threshold")$threshold
+  # changing best point to 0.5 - see typically this is the point
+  optimal_threshold <- 0.5 # coords(roc_obj, "best", ret = "threshold")$threshold
+  # Calculate accuracy, sensitivity, and specificity
+  predicted_class <- ifelse(predictions > optimal_threshold, 1, 0)
+  cm <- confusionMatrix(factor(predicted_class), factor(actual))
+  f1_score <- cm$byClass['F1']
+  kappa <- cm$overall['Kappa']
+  brier_score <- mean((predictions - as.numeric(actual))^2)
+  
+  ci <- ci.auc(roc_obj)
+  return(list(auc = auc, 
+              ci_lower = ci[1],
+              ci_upper = ci[3],
+              accuracy = cm$overall["Accuracy"],
+              sensitivity = cm$byClass["Sensitivity"],
+              specificity = cm$byClass["Specificity"],
+              predictions = predictions,
+              actual = actual, 
+              optimal_threshold =optimal_threshold,
+              f1_score = f1_score, # avg of precision ( true +ve s / all classified as positives) and recall (what proportion of actual +ves cases do you catch)
+              kappa = kappa, #cohen's kappa inter rater agreement 
+              brier_score = brier_score))# like mean sq error - most important the prob that the predprob are cloose to true probs))
+}
+
+
+
+perform_loocvRF <- function(data, formula) {
+  n <- nrow(data)
+  predictions <- numeric(n)
+# Perform LOO-CV
+for (i in 1:n) {
+  # Split data into training and test sets
+  train <- data[-i, ]
+  test <- data[i, ]
+  
+  ### train RF 
+  # Train random forest model using important features
+  rf_model <- randomForest(formula, data = train, ntree = 100)
+  
+   # Make prediction for left-out sample
+  predictions[i] <- predict(rf_model, newdata = test, type = "prob")[, 2]
+  
+}
+
+# Calculate metrics
+  actual <- data$risk  # Assuming 'risk' is your binary outcome variable
+  roc_obj <- roc(actual, predictions)
+  auc <- auc(roc_obj)
+  
+  # Find optimal threshold
+  ####optimal_threshold <- coords(roc_obj, "best", ret = "threshold")$threshold
+  # changing best point to 0.5 - see typically this is the point
+  optimal_threshold <- 0.5 #coords(roc_obj, "best", ret = "threshold")$threshold
+  # Calculate accuracy, sensitivity, and specificity
+  predicted_class <- ifelse(predictions > optimal_threshold, 1, 0)
+  cm <- confusionMatrix(factor(predicted_class), factor(actual))
+  f1_score <- cm$byClass['F1']
+  kappa <- cm$overall['Kappa']
+  brier_score <- mean((predictions - as.numeric(actual))^2)
+  
+  ci <- ci.auc(roc_obj)
+  return(list(auc = auc, 
+              ci_lower = ci[1],
+              ci_upper = ci[3],
+              accuracy = cm$overall["Accuracy"],
+              sensitivity = cm$byClass["Sensitivity"],
+              specificity = cm$byClass["Specificity"],
+              predictions = predictions,
+              actual = actual, 
+              optimal_threshold =optimal_threshold,
+              f1_score = f1_score, # avg of precision ( true +ve s / all classified as positives) and recall (what proportion of actual +ves cases do you catch)
+              kappa = kappa, #cohen's kappa inter rater agreement 
+              brier_score = brier_score))# like mean sq error - most important the prob that the predprob are cloose to true probs))
+}
+
+```
+
+For the Language model the question is what measures to choose? 
+- Try with all the language measures available in NGS battery that are non-reading measures = 6 in KG and 6 in first grade
+- Another idea is to try to choose just the first 2 features from the feature importance plots. KG: Blending, DGS G1: Deletion and RAO
+- Another option is to pick the 3 from Julian's paper (this is what we did first)  For both grades:  SRT, RAO, Del
+
+
+#KG - LOOCV
+```{r}
+set.seed(332)
+df_risk_V <- df_risk_K %>%  filter(complete.cases(risk)) %>% 
+  filter(complete.cases(LetAbilitySS))  %>% filter(complete.cases(pseAbilitySS))  %>% 
+  filter(complete.cases(MPabilitySS)) 
+
+df_risk_L <- df_risk_K %>%  filter(complete.cases(risk)) %>%  filter(complete.cases(del_ucat)) %>% 
+  filter(complete.cases(rao)) %>% filter(complete.cases(srt_ucat)) %>% filter(complete.cases(ble_ucat)) %>% 
+  filter(complete.cases(dgs)) %>% filter(complete.cases(nwr_ucat)) 
+
+df_risk_VL <- df_risk_K %>%  filter(complete.cases(risk)) %>%  filter(complete.cases(rao))  %>% filter(complete.cases(del_ucat)) %>% 
+  filter(complete.cases(srt_ucat)) %>% 
+  filter(complete.cases(LetAbilitySS)) %>% 
+  filter(complete.cases(pseAbilitySS))  %>% 
+  filter(complete.cases(MPabilitySS)) %>% 
+  filter(complete.cases(ble_ucat)) %>% 
+  filter(complete.cases(dgs)) %>% filter(complete.cases(nwr_ucat)) 
+
+# Visual model
+visual_formula <- risk ~  LetAbilitySS + pseAbilitySS + MPabilitySS
+visual_results <- perform_loocv(df_risk_V, visual_formula)
+
+# Language model
+#language_formula <- risk ~ srt_ucat + rao +  del_ucat  # ble_ucat + dgs #
+language_formula <- risk ~ srt_ucat + rao +  del_ucat + ble_ucat + nwr_ucat
+language_results <- perform_loocv(df_risk_L, language_formula)
+
+# Combined model
+#combined_formula <- risk ~ srt_ucat + rao + del_ucat + LetAbilitySS + pseAbilitySS + MPabilitySS 
+combined_formula <- risk ~ srt_ucat + rao +  del_ucat + ble_ucat + nwr_ucat + LetAbilitySS + pseAbilitySS + MPabilitySS
+combined_results <- perform_loocv(df_risk_VL, combined_formula)
+# Print results
+print("Visual Model Results:")
+print(visual_results)
+
+print("Language Model Results:")
+print(language_results)
+
+print("Combined Model Results:")
+print(combined_results)
+
+
+# Calculate the ROC curve
+roc_objV <- roc(visual_results$actual, visual_results$predictions)
+roc_objL <- roc(language_results$actual, language_results$predictions)
+roc_objVL <- roc(combined_results$actual, combined_results$predictions)
+
+# Calculate AUC values
+auc_V <- auc(roc_objV)
+auc_L <- auc(roc_objL)
+auc_VL<- auc(roc_objVL)
+
+# Create data frames for ggplot
+df_roc_V <- data.frame(FPR = 1 - roc_objV$specificities, TPR = roc_objV$sensitivities, Model = "Visual")
+df_roc_L <- data.frame(FPR = 1 - roc_objL$specificities, TPR = roc_objL$sensitivities, Model = "Language")
+df_roc_VL <- data.frame(FPR = 1 - roc_objVL$specificities, TPR = roc_objVL$sensitivities, Model = "Visual + Language")
+df_roc <- rbind(df_roc_V, df_roc_L,df_roc_VL)
+
+
+# Create ggplot
+ggplot(df_roc, aes(x = FPR, y = TPR, color = as.factor(Model))) +
+  geom_line(size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  scale_color_manual(values = c("Visual" = "orchid4", "Language" = "palegreen4", "Visual + Language" = "turquoise4")) +
+  theme_bw() +
+  annotate("text", x = 0.45, y = 0.25, 
+           label = paste("AUC (Visual):", round(auc_V, 3)),
+           color = "orchid4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.20, 
+           label = paste("AUC (Language):", round(auc_L, 3)),
+           color = "palegreen4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.3, 
+           label = paste("AUC (Visual+Language):", round(auc_VL, 3)),
+           color = "turquoise4",
+           hjust = 0) +
+  coord_equal()
+
+# Statistical test for AUC difference
+auc_test <- roc.test(roc_objV, roc_objL)
+print(auc_test)
+
+auc_test2 <- roc.test(roc_objVL, roc_objL)
+print(auc_test2)
+
+auc_test3 <- roc.test(roc_objVL, roc_objV)
+print(auc_test3)
+
+total_at_risk_L <- sum(df_risk_L$risk == 1) 
+total_at_risk_V <- sum(df_risk_V$risk == 1)
+
+```
+
+```{r}
+# Random Forests 
+set.seed(343)
+df_risk_K$risk <- as.factor(df_risk_K$risk)
+df_risk_K <- df_risk_K %>% filter(!is.na(df_risk_K$risk))
+
+df_risk_K_RF <- df_risk_K %>% select(LetAbilitySS, pseAbilitySS,MPabilitySS, risk)
+df_risk_K_visual_RF <- df_risk_K_RF %>% filter(complete.cases(LetAbilitySS, pseAbilitySS,MPabilitySS, risk))
+#imp <- mice(df_risk_K_RF, print =FALSE, seed=1 )
+#df_risk_K_visual_RF <- as.data.frame(mice::complete(imp,1))
+
+RF_visual_results <- perform_loocvRF(df_risk_K_visual_RF, visual_formula)
+
+df_risk_K_RF <- df_risk_K %>% #select(srt_ucat , rao , del_ucat,  risk) #
+  select(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, risk) #
+#imp <- mice(df_risk_K_RF, print =FALSE, seed=1 )
+#df_risk_K_lang_RF <- as.data.frame(mice::complete(imp,1))
+df_risk_K_lang_RF <-df_risk_K_RF %>% filter(complete.cases(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, risk)) #filter(complete.cases(srt_ucat , rao , del_ucat, risk))
+RF_lang_results <- perform_loocvRF(df_risk_K_lang_RF, language_formula)
+
+df_risk_K_RF <- df_risk_K %>% select(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk)
+  #select(srt_ucat , rao , del_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk) #select(ble_ucat, dgs, LetAbilitySS, pseAbilitySS,MPabilitySS,ble_ucat, dgs,nwr_ucat,  risk) #
+#imp <- mice(df_risk_K_RF, print =FALSE, seed=1 )
+#df_risk_K_comb_RF <- as.data.frame(mice::complete(imp,1))
+df_risk_K_comb_RF <- df_risk_K_RF %>% filter(complete.cases(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk))
+RF_comb_results <- perform_loocvRF(df_risk_K_comb_RF, combined_formula)
+
+# Calculate the ROC curve
+roc_objV <- roc(RF_visual_results$actual, RF_visual_results$predictions)
+roc_objL <- roc(RF_lang_results$actual, RF_lang_results$predictions)
+roc_objVL <- roc(RF_comb_results$actual, RF_comb_results$predictions)
+
+# Calculate AUC values
+auc_V <- auc(roc_objV)
+auc_L <- auc(roc_objL)
+auc_VL<- auc(roc_objVL)
+
+# Create data frames for ggplot
+df_roc_V <- data.frame(FPR = 1 - roc_objV$specificities, TPR = roc_objV$sensitivities, Model = "Visual")
+df_roc_L <- data.frame(FPR = 1 - roc_objL$specificities, TPR = roc_objL$sensitivities, Model = "Language")
+df_roc_VL <- data.frame(FPR = 1 - roc_objVL$specificities, TPR = roc_objVL$sensitivities, Model = "Visual + Language")
+df_roc <- rbind(df_roc_V, df_roc_L,df_roc_VL)
+
+
+# Create ggplot
+ggplot(df_roc, aes(x = FPR, y = TPR, color = as.factor(Model))) +
+  geom_line(size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  scale_color_manual(values = c("Visual" = "orchid4", "Language" = "palegreen4", "Visual + Language" = "turquoise4")) +
+  theme_bw() +
+  annotate("text", x = 0.45, y = 0.25, 
+           label = paste("AUC (Visual):", round(auc_V, 3)),
+           color = "orchid4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.20, 
+           label = paste("AUC (Language):", round(auc_L, 3)),
+           color = "palegreen4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.3, 
+           label = paste("AUC (Visual+Language):", round(auc_VL, 3)),
+           color = "turquoise4",
+           hjust = 0) +
+  annotate("text", x = 0, y = 1, 
+           label = paste("n (Visual): 157"),
+           color = "orchid4",
+           hjust = 0, 
+           size =2) +
+  annotate("text", x = 0, y = 0.95, 
+           label = paste("n (Language):242"),
+           color = "palegreen4",
+           hjust = 0, size=2) +
+  annotate("text", x = 0, y = 0.90, 
+           label = paste("n (Visual+Language):108"),
+           color = "turquoise4",
+           hjust = 0,size=2) +
+  coord_equal()
+
+# Statistical test for AUC difference
+auc_test <- roc.test(roc_objV, roc_objL)
+print(auc_test)
+
+auc_test2 <- roc.test(roc_objVL, roc_objL)
+print(auc_test2)
+
+auc_test3 <- roc.test(roc_objVL, roc_objV)
+print(auc_test3)
+
+total_at_risk_L <- sum(df_risk_L$risk == 1) 
+total_at_risk_V <- sum(df_risk_V$risk == 1)
+```
+
+data consideration:
+
+How many categorical features (don’t fall into the dummy variable trap, this won’t play well with linear regression)
+How correlated are your features (linear regression can blow up if you have multicollinearity, random forest doesn’t mind as much)
+Check if your features need to be scaled (random forest is scale invariant, linear regression is not)
+Check for outliers in the target (linear regression will be more sensitive to this than random forest) 
+
+
+----- # trying to plot GLM and Random forest using LOO-CV for first grade ----- 
+#G1 - LOOCV
+```{r}
+set.seed(332)
+df_risk_V <- df_risk_1 %>%  filter(complete.cases(risk)) %>% 
+  filter(complete.cases(LetAbilitySS))  %>% filter(complete.cases(pseAbilitySS))  %>% 
+  filter(complete.cases(MPabilitySS)) 
+
+df_risk_L <- df_risk_1 %>%  filter(complete.cases(risk)) %>% filter(complete.cases(srt_ucat))  %>% 
+  filter(complete.cases(rao)) %>% 
+  filter(complete.cases(del_ucat)) 
+
+df_risk_VL <- df_risk_1 %>%  filter(complete.cases(risk))  %>% filter(complete.cases(srt_ucat))  %>% 
+  filter(complete.cases(rao)) %>% 
+   filter(complete.cases(del_ucat)) %>% 
+    filter(complete.cases(LetAbilitySS)) %>% 
+  filter(complete.cases(pseAbilitySS))  %>% 
+  filter(complete.cases(MPabilitySS)) 
+
+# Visual model
+visual_formula <- risk ~  LetAbilitySS + pseAbilitySS + MPabilitySS
+visual_results <- perform_loocv(df_risk_V, visual_formula)
+
+# Language model
+language_formula <- risk ~ srt_ucat + rao + del_ucat + nwr_ucat + evo_ucat + dgs # rao + srt_ucat +del_ucat
+language_results <- perform_loocv(df_risk_L, language_formula)
+
+# Combined model
+combined_formula <- risk ~  srt_ucat + rao + del_ucat + nwr_ucat + evo_ucat + dgs + LetAbilitySS + pseAbilitySS + MPabilitySS ## rao + srt_ucat + del_ucat + LetAbilitySS + pseAbilitySS + MPabilitySS
+combined_results <- perform_loocv(df_risk_VL, combined_formula)
+# Print results
+print("Visual Model Results:")
+print(visual_results)
+
+print("Language Model Results:")
+print(language_results)
+
+print("Combined Model Results:")
+print(combined_results)
+
+
+# Calculate the ROC curve
+roc_objV <- roc(visual_results$actual, visual_results$predictions)
+roc_objL <- roc(language_results$actual, language_results$predictions)
+roc_objVL <- roc(combined_results$actual, combined_results$predictions)
+
+# Calculate AUC values
+auc_V <- auc(roc_objV)
+auc_L <- auc(roc_objL)
+auc_VL<- auc(roc_objVL)
+
+# Create data frames for ggplot
+df_roc_V <- data.frame(FPR = 1 - roc_objV$specificities, TPR = roc_objV$sensitivities, Model = "Visual")
+df_roc_L <- data.frame(FPR = 1 - roc_objL$specificities, TPR = roc_objL$sensitivities, Model = "Language")
+df_roc_VL <- data.frame(FPR = 1 - roc_objVL$specificities, TPR = roc_objVL$sensitivities, Model = "Visual + Language")
+df_roc <- rbind(df_roc_V, df_roc_L,df_roc_VL)
+
+
+# Create ggplot
+ggplot(df_roc, aes(x = FPR, y = TPR, color = as.factor(Model))) +
+  geom_line(size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "ROC Curves Comparison",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  scale_color_manual(values = c("Visual" = "orchid4", "Language" = "palegreen4", "Visual + Language" = "turquoise4")) +
+  theme_bw() +
+  annotate("text", x = 0.45, y = 0.25, 
+           label = paste("AUC (Visual):", round(auc_V, 3)),
+           color = "orchid4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.20, 
+           label = paste("AUC (Language):", round(auc_L, 3)),
+           color = "palegreen4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.3, 
+           label = paste("AUC (Visual+Language):", round(auc_VL, 3)),
+           color = "turquoise4",
+           hjust = 0) +
+  coord_equal()
+
+# Statistical test for AUC difference
+auc_test <- roc.test(roc_objV, roc_objL)
+print(auc_test)
+
+auc_test2 <- roc.test(roc_objVL, roc_objL)
+print(auc_test2)
+
+auc_test3 <- roc.test(roc_objVL, roc_objV)
+print(auc_test3)
+
+total_at_risk_L <- sum(df_risk_L$risk == 1) 
+total_at_risk_V <- sum(df_risk_V$risk == 1)
+```
+```{r}
+set.seed(545)
+# Random Forests 
+df_risk_1$risk <- as.factor(df_risk_1$risk)
+df_risk_1 <- df_risk_1 %>% filter(!is.na(df_risk_1$risk))
+
+df_risk_1_RF <- df_risk_1 %>% select(LetAbilitySS, pseAbilitySS,MPabilitySS, risk)
+#imp <- mice(df_risk_1_RF, print =FALSE, seed=1 )
+#df_risk_1_visual_RF <- as.data.frame(mice::complete(imp,1))
+df_risk_1_visual_RF <- df_risk_1_RF %>% filter(complete.cases(LetAbilitySS, pseAbilitySS,MPabilitySS, risk))
+RF_visual_results <- perform_loocvRF(df_risk_1_visual_RF, visual_formula)
+
+df_risk_1 <- df_risk_1 %>% mutate(ELStatus = coalesce(ELStatus.x,ELStatus.y,ELStatus))
+df_risk_1_RF <- df_risk_1 %>% #select(rao , srt_ucat,del_ucat,risk) # 
+select(srt_ucat,rao , del_ucat, nwr_ucat , evo_ucat , dgs, risk)
+#imp <- mice(df_risk_1_RF, print =FALSE, seed=1 )
+#df_risk_1_lang_RF <- as.data.frame(mice::complete(imp,1))
+ 
+df_risk_1_lang_RF <- df_risk_1_RF %>% #filter(complete.cases(rao ,  srt_ucat,del_ucat,risk))
+  filter(complete.cases(srt_ucat,rao , del_ucat, nwr_ucat , evo_ucat , dgs,risk))
+RF_lang_results <- perform_loocvRF(df_risk_1_lang_RF, language_formula)
+
+df_risk_1_RF <- df_risk_1 %>% #select(rao , srt_ucat,del_ucat, LetAbilitySS, pseAbilitySS,MPabilitySS, risk) #
+select(srt_ucat,rao , del_ucat, nwr_ucat , evo_ucat , dgs, LetAbilitySS, pseAbilitySS,MPabilitySS, risk)
+# imp <- mice(df_risk_1_RF, print =FALSE, seed=1 )
+# df_risk_1_comb_RF <- as.data.frame(mice::complete(imp,1))
+df_risk_1_comb_RF <- df_risk_1_RF %>% #filter(complete.cases(rao , srt_ucat,del_ucat, LetAbilitySS, pseAbilitySS,MPabilitySS, risk))
+  filter(complete.cases(srt_ucat,rao , del_ucat, nwr_ucat , evo_ucat , dgs, LetAbilitySS, pseAbilitySS,MPabilitySS, risk))
+RF_comb_results <- perform_loocvRF(df_risk_1_comb_RF, combined_formula)
+
+# Calculate the ROC curve
+roc_objV <- roc(RF_visual_results$actual, RF_visual_results$predictions)
+roc_objL <- roc(RF_lang_results$actual, RF_lang_results$predictions)
+roc_objVL <- roc(RF_comb_results$actual, RF_comb_results$predictions)
+
+# Calculate AUC values
+auc_V <- auc(roc_objV)
+auc_L <- auc(roc_objL)
+auc_VL<- auc(roc_objVL)
+
+# Create data frames for ggplot
+df_roc_V <- data.frame(FPR = 1 - roc_objV$specificities, TPR = roc_objV$sensitivities, Model = "Visual")
+df_roc_L <- data.frame(FPR = 1 - roc_objL$specificities, TPR = roc_objL$sensitivities, Model = "Language")
+df_roc_VL <- data.frame(FPR = 1 - roc_objVL$specificities, TPR = roc_objVL$sensitivities, Model = "Visual + Language")
+df_roc <- rbind(df_roc_V, df_roc_L,df_roc_VL)
+
+
+# Create ggplot
+ggplot(df_roc, aes(x = FPR, y = TPR, color = as.factor(Model))) +
+  geom_line(size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  scale_color_manual(values = c("Visual" = "orchid4", "Language" = "palegreen4", "Visual + Language" = "turquoise4")) +
+  theme_bw() +
+  annotate("text", x = 0.45, y = 0.25, 
+           label = paste("AUC (Visual):", round(auc_V, 3)),
+           color = "orchid4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.20, 
+           label = paste("AUC (Language):", round(auc_L, 3)),
+           color = "palegreen4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.3, 
+           label = paste("AUC (Visual+Language):", round(auc_VL, 3)),
+           color = "turquoise4",
+           hjust = 0) +
+  annotate("text", x = 0, y = 1, 
+           label = paste("n (Visual): 381"),
+           color = "orchid4",
+           hjust = 0, 
+           size =2) +
+  annotate("text", x = 0, y = 0.95, 
+           label = paste("n (Language):400"),
+           color = "palegreen4",
+           hjust = 0, size=2) +
+  annotate("text", x = 0, y = 0.90, 
+           label = paste("n (Visual+Language):216"),
+           color = "turquoise4",
+           hjust = 0,size=2) +
+  coord_equal()
+
+# Statistical test for AUC difference
+auc_test <- roc.test(roc_objV, roc_objL)
+print(auc_test)
+
+auc_test2 <- roc.test(roc_objVL, roc_objL)
+print(auc_test2)
+
+auc_test3 <- roc.test(roc_objVL, roc_objV)
+print(auc_test3)
+
+total_at_risk_L <- sum(df_risk_L$risk == 1) 
+total_at_risk_V <- sum(df_risk_V$risk == 1)
+```
+
+# Now fit the Random forest and GLM on full data so that we can compare the RF results and standardized b corefficients 
+
+```{r}
+
+df_risk_K <- df_risk %>% filter(grade ==0) 
+# G1
+df_risk_1 <- df_risk %>% filter(grade ==1) 
+
+
+df_risk_K <- df_risk_K %>% mutate(ELStatus = coalesce(ELStatus.x,ELStatus.y,ELStatus)) #%>% filter (ELStatus == "EL")
+df_risk_1 <- df_risk_1 %>% mutate(ELStatus = coalesce(ELStatus.x,ELStatus.y,ELStatus)) #%>% filter(ELStatus == "EL")
+
+#df_risk_KG <- df_risk_K %>% select(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao , del_ucat, nwr_ucat , dgs, ble_ucat, risk)
+#df_risk_G1 <- df_risk_1 %>% select(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao , del_ucat, nwr_ucat , evo_ucat , dgs,risk)
+
+df_risk_KG <- df_risk_K %>% select(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao , dgs, risk)
+df_risk_G1 <- df_risk_1 %>% select(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao , dgs, risk)
+
+df_risk_KG_std <- df_risk_KG
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "del_ucat", "ble_ucat", "dgs", "nwr_ucat")
+for (pred in predictors) {
+  df_risk_KG_std[[pred]] <- scale(df_risk_KG[[pred]])
+}
+
+GLM_modelKG <- glm(risk ~ LetAbilitySS + pseAbilitySS + MPabilitySS+ srt_ucat+ rao+ del_ucat + ble_ucat + dgs +nwr_ucat,
+                   data = df_risk_KG, family = binomial)
+summary(GLM_modelKG)
+
+# Refit the model with standardized predictors
+GLM_modelKG_std <- glm(risk ~ LetAbilitySS + pseAbilitySS + MPabilitySS + srt_ucat + rao + del_ucat + ble_ucat + dgs + nwr_ucat,
+                       data = df_risk_KG_std, family = binomial)
+
+# Extract coefficients
+model_summary <- summary(GLM_modelKG_std)
+std_coef <- coef(GLM_modelKG_std)[-1]  # Exclude intercept 
+std_errors <- model_summary$coefficients[-1, "Std. Error"]
+# Create a data frame with predictor names and standardized coefficients
+plot_data <- data.frame(
+  predictor = names(std_coef),
+  std_beta = std_coef, 
+  std_error = std_errors
+)
+
+# First, reorder the factor levels of the predictor variable
+plot_data$predictor <- reorder(plot_data$predictor, abs(plot_data$std_beta), decreasing = TRUE)
+
+name_mapping <- c(
+  ble_ucat = "Blending",
+  dgs = "Digit Span",
+  LetAbilitySS = "MEP-L",
+  pseAbilitySS = "MEP-P",
+  MPabilitySS = "Motion",
+  rao = "Rapid Automatic Naming",
+  srt_ucat = "Sentence Repetition",
+  nwr_ucat = "Non-word Repetition",
+  del_ucat = "Deletion"
+)
+# Now create the plot
+ggplot(plot_data, aes(x = predictor, y = std_beta)) +
+  geom_pointrange(aes(ymin = std_beta - std_error, 
+                      ymax = std_beta + std_error),
+                  color = "darkslategray", size = 0.5) +
+  geom_point(size = 2, color = "darkslategray") +
+  geom_text(aes(label = round(std_beta, 3)), vjust = -0.5, hjust = ifelse(plot_data$std_beta >= 0, -0.2, 1.2)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() +
+  scale_x_discrete(limits = rev(levels(plot_data$predictor)), labels = name_mapping) +  # This reverses the order on the y-axis
+  labs(title = "Kindergarten",
+       y = "Standardized Beta Coefficients with SEM",
+       x = "") +  
+  theme_bw() +  
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 0,
+                                   size=15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18))#+
+  #ylim(-3, 3)  # Adjust these values based on your data range
+
+
+```
+```{r}
+# Now use Random forest plots to understand features that are important 
+# This can't deal with missing data so imp 
+library(Boruta)
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "dgs")
+#df_risk_KG <- df_risk_KG %>% filter(complete.cases(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao , del_ucat, nwr_ucat , dgs, ble_ucat, risk))
+df_risk_KG <- df_risk_KG %>% filter(complete.cases(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao, risk))
+imp <- mice(df_risk_KG, print =FALSE, seed=1 )
+df_risk_KG <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ .-student_tracking_id, data = df_risk_KG, doTrace = 0, maxRuns = 100, ntrees = 100)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot2 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "Kindergarten") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+  axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18))+ # Added x-axis title size
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot2
+
+
+```
+Importance values indicate how much a given feature contributes to reducing the model's error. In Random Forests (and Boruta), this is often calculated by measuring how much the classification accuracy decreases when the values of that feature are randomly permuted. The median importance represents the central value across many iterations, showing the stability of each feature's contribution.These values do not provide a direct relationship (positive or negative) between the predictor and the response variable but instead reflect how important the predictor is in the overall predictive process.
+
+Beta Coefficients (GLM):
+Beta coefficients quantify the linear relationship between a predictor and the response variable. Each beta coefficient tells you how much the response variable changes, on average, for a one-unit increase in the predictor, holding all other predictors constant. A positive or negative sign of the beta coefficient indicates the direction of this relationship.
+These coefficients also provide information about statistical significance (p-values) and the effect size of each predictor in the linear model.
+
+
+### Do the same for first grade 
+
+```{r}
+df_risk_G1_std <- df_risk_G1
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "del_ucat", "evo_ucat", "dgs", "nwr_ucat")
+for (pred in predictors) {
+  df_risk_G1_std[[pred]] <- scale(df_risk_G1[[pred]])
+}
+
+GLM_modelG1 <- glm(risk ~ LetAbilitySS + pseAbilitySS + MPabilitySS+ srt_ucat+ rao+ del_ucat + evo_ucat + dgs +nwr_ucat,
+                   data = df_risk_G1, family = binomial)
+summary(GLM_modelG1)
+
+# Refit the model with standardized predictors
+GLM_modelG1_std <- glm(risk ~ LetAbilitySS + pseAbilitySS + MPabilitySS + srt_ucat + rao + del_ucat + evo_ucat + dgs + nwr_ucat,
+                       data = df_risk_G1_std, family = binomial)
+
+# Extract coefficients
+model_summary <- summary(GLM_modelG1_std)
+std_coef <- coef(GLM_modelG1_std)[-1]  # Exclude intercept 
+std_errors <- model_summary$coefficients[-1, "Std. Error"]
+# Create a data frame with predictor names and standardized coefficients
+plot_data <- data.frame(
+  predictor = names(std_coef),
+  std_beta = std_coef, 
+  std_error = std_errors
+)
+
+# First, reorder the factor levels of the predictor variable
+plot_data$predictor <- reorder(plot_data$predictor, abs(plot_data$std_beta), decreasing = TRUE)
+
+name_mapping <- c(
+  evo_ucat = "Vocabulary",
+  dgs = "Digit Span",
+  LetAbilitySS = "MEP-L",
+  pseAbilitySS = "MEP-P",
+  MPabilitySS = "Motion",
+  rao = "Rapid Automatic Naming",
+  srt_ucat = "Sentence Repetition",
+  nwr_ucat = "Non-word Repetition",
+  del_ucat = "Deletion"
+)
+# Now create the plot
+ggplot(plot_data, aes(x = predictor, y = std_beta)) +
+  geom_pointrange(aes(ymin = std_beta - std_error, 
+                      ymax = std_beta + std_error),
+                  color = "darkslategray", size = 0.5) +
+  geom_point(size = 2, color = "darkslategray") +
+  geom_text(aes(label = round(std_beta, 3)), vjust = -0.5, hjust = ifelse(plot_data$std_beta >= 0, -0.2, 1.2)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
+  coord_flip() +
+  scale_x_discrete(limits = rev(levels(plot_data$predictor)), labels = name_mapping) +  # This reverses the order on the y-axis
+  labs(title = "First grade",
+       y = "Standardized Beta Coefficients with SEM",
+       x = "") +  
+  theme_bw() +  
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 0,
+                                   size=15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+  ylim(-3, 3)  # Adjust these values based on your data range
+
+```
+## With Random forests 
+
+```{r}
+
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "dgs")
+
+#df_risk_G1 <- df_risk_G1 %>% filter(complete.cases(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao , del_ucat, nwr_ucat , dgs, evo_ucat, risk))
+
+df_risk_G1 <- df_risk_G1 %>% filter(complete.cases(student_tracking_id, LetAbilitySS,pseAbilitySS,MPabilitySS, srt_ucat,rao ,  dgs,  risk))
+
+imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ .-student_tracking_id, data = df_risk_G1, doTrace = 0, maxRuns = 100, ntrees = 100)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot2 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot2
+
+```
+
+
+
