@@ -1,0 +1,863 @@
+---
+title: "Figure1,2 Boxplots"
+output:
+  pdf_document: default
+  html_notebook: default
+author: "Maha Ramamurthy" 
+Date: "June 2024"
+Place: "Stanford university"
+---
+
+```{r}
+
+library(rstatix)
+
+library(plotrix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(psych)
+library(cocor)
+library(stargazer)
+library(data.table)
+library(gtsummary)
+library(kableExtra)
+library(here)
+library(Boruta)
+library(gtsummary)
+library(ggpubr)
+library(data.table)
+library(ggExtra)
+library (psych)
+library(plotROC)
+library(rstatix)
+library(plotrix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(psych)
+library(stargazer)
+library(gtsummary)
+library(ggpubr)
+library(ggExtra)
+library(cutpointr)
+library(lme4)
+library(dplyr)
+library(ggplot2)
+library(effsize)
+```
+
+```{r}
+#Read all the dfs with demographic and reading outcome measures 
+df_demo_LET_Available <- read.csv("~/LET.csv")
+df_demo_PSE_Available <- read.csv("~/PSE.csv")
+df_demo_GMC_Available <- read.csv("~/GMC.csv")
+```
+
+# How correlated are primary Language and FRPM?
+```{r}
+
+table(df_demo_LET_Available$ELStatus, df_demo_LET_Available$proxy_SES)
+# These are dichotomous variables and therefore need to report the phi coefficient not really r! 
+cor(ifelse(df_demo_LET_Available$ELStatus=="EO", 0, 1),ifelse(df_demo_LET_Available$proxy_SES=="Eligible",1,0),use = "complete.obs")
+```
+
+
+# Are the visual measures different across the FRPM eligible and inelligible groups? 
+
+ - in Kinder they are not the LEtter task is in g1 and MP also shows up as significant by grade 1
+```{r}
+# MEP-LET
+
+df_frmp_LET<- df_demo_LET_Available %>% filter(!(grade == 2| grade == 3)) %>% filter(!(proxy_SES == "NotReported"))  
+df_frmp_LET %>% group_by(proxy_SES) %>% get_summary_stats(LetAbilitySS, type = "mean_sd")
+df_frmp_LET$proxy_SES <- factor(df_frmp_LET$proxy_SES) #, levels = rev(levels(df_frmp_LET$proxy_SES)))
+
+summary_stats <- df_frmp_LET %>%
+  group_by( proxy_SES) %>%
+  get_summary_stats(LetAbilitySS, type = "mean_sd")
+
+# Count sample size by group
+sample_sizes <- df_frmp_LET %>% group_by(grade) %>% 
+  count(proxy_SES) %>%
+  rename(SampleSize = n)
+
+# Merge summary statistics and sample sizes
+summary_stats <- merge(summary_stats, sample_sizes, by = "proxy_SES")
+
+bxp <- ggboxplot(
+  df_frmp_LET, x = "proxy_SES", y = "LetAbilitySS", 
+  ylab = "MEP-L (ø)", xlab = "",fill ="proxy_SES" ) + 
+  facet_grid(~grade,labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+     data = sample_sizes %>% mutate(ordered_group = factor(proxy_SES, levels = c("Eligible", "Ineligible"))),
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x = ordered_group),
+    size = 5
+  ) + scale_fill_manual(values = c("skyblue", "slategray"))  + scale_x_discrete(labels = c( "Eligible", "Ineligible")) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+
+bxp
+
+#Identify outliers 
+df_frmp_LET %>%
+  group_by(proxy_SES) %>%
+  identify_outliers(LetAbilitySS)
+
+# Compute Shapiro wilk test by goups
+
+df_frmp_LET %>%
+  group_by(proxy_SES) %>%
+  shapiro_test(LetAbilitySS)
+# Draw a qq plot by group
+ggqqplot(df_frmp_LET, x = "LetAbilitySS", facet.by = "proxy_SES")
+#Testing for equal variance assumption to run the test
+df_frmp_LET %>% levene_test(LetAbilitySS ~ proxy_SES) 
+df_frmp_LET %>%  cohens_d(LetAbilitySS ~ proxy_SES, var.equal = TRUE)
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+
+
+stat.test2 <- df_frmp_LET %>% group_by(grade) %>%
+  t_test(LetAbilitySS ~ proxy_SES, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% 
+  mutate(asteriks = ifelse(p <= alpha, "*", "ns")) %>%
+  mutate(cohen.d = lapply(split(df_frmp_LET, df_frmp_LET$grade), function(x) {
+    cohen.d(LetAbilitySS ~ proxy_SES, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "proxy_SES", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "proxy_SES",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+pValues_tracker =stat.test2$p; 
+
+```
+```{r}
+# MEP-PSE
+df_frpm_PSE<- df_demo_PSE_Available %>% filter(grade !=3 & grade !=2) %>% filter(!(proxy_SES == "NotReported"))  
+df_frpm_PSE %>% group_by(proxy_SES) %>% get_summary_stats(pseAbilitySS, type = "mean_sd")
+df_frpm_PSE$proxy_SES <- factor(df_frpm_PSE$proxy_SES)
+# Count sample size by group
+sample_sizes <- df_frpm_PSE %>% group_by(grade) %>% 
+  count(proxy_SES) %>%
+  rename(SampleSize = n)
+
+bxp <- ggboxplot(
+  df_frpm_PSE, x = "proxy_SES", y = "pseAbilitySS", 
+  ylab = "MEP-P (ø)", xlab = "", fill = "proxy_SES"
+  ) + facet_grid(~grade,labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+     data = sample_sizes %>% mutate(ordered_group = factor(proxy_SES, levels = c("Eligible", "Ineligible"))),
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x = ordered_group),
+    size = 5
+  ) + scale_fill_manual(values = c("skyblue", "slategray")) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+
+bxp
+
+#Identify outliers 
+df_frpm_PSE %>%
+  group_by(proxy_SES) %>%
+  identify_outliers(pseAbilitySS)
+
+# Compute Shapiro wilk test by goups
+
+df_frpm_PSE %>%
+  group_by(proxy_SES) %>%
+  shapiro_test(pseAbilitySS)
+# Draw a qq plot by group
+ggqqplot(df_frpm_PSE, x = "pseAbilitySS", facet.by = "proxy_SES")
+#Testing for equal variance assumption to run the test
+df_frpm_PSE %>% levene_test(pseAbilitySS ~ proxy_SES) 
+df_frpm_PSE %>%  cohens_d(pseAbilitySS ~ proxy_SES, var.equal = TRUE)
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_frpm_PSE %>% group_by(grade) %>%
+  t_test(pseAbilitySS ~ proxy_SES, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% 
+  mutate(asteriks = ifelse(p <= alpha, "*", "ns")) %>%
+  mutate(cohen.d = lapply(split(df_frpm_PSE, df_frpm_PSE$grade), function(x) {
+    cohen.d(pseAbilitySS ~ proxy_SES, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "proxy_SES", dodge = 2.5)
+  
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "proxy_SES",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+pValues_tracker = c(pValues_tracker, stat.test2$p);
+
+```
+```{r}
+# MP 
+df_frpm_GMC<- df_demo_GMC_Available %>% filter(grade !=3 & grade !=2) %>% filter(!(proxy_SES == "NotReported"))  
+df_frpm_GMC %>% group_by(proxy_SES) %>% get_summary_stats(MPabilitySS, type = "mean_sd")
+df_frpm_GMC$proxy_SES <- factor(df_frpm_GMC$proxy_SES)
+# Count sample size by group
+sample_sizes <- df_frpm_GMC %>% group_by(grade) %>% 
+  count(proxy_SES) %>%
+  rename(SampleSize = n)
+
+bxp <- ggboxplot(
+  df_frpm_GMC, x = "proxy_SES", y = "MPabilitySS", 
+  ylab = "Motion (ø)", xlab = " ", fill = "proxy_SES"
+  ) + facet_grid(~grade,labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+     data = sample_sizes %>% mutate(ordered_group = factor(proxy_SES, levels = c("Eligible", "Ineligible"))),
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x = ordered_group),
+    size = 5
+  ) + scale_fill_manual(values = c("skyblue", "slategray")) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+#Identify outliers 
+df_frpm_GMC %>%
+  group_by(proxy_SES) %>%
+  identify_outliers(MPabilitySS)
+
+# Compute Shapiro wilk test by goups
+
+df_frpm_GMC %>%
+  group_by(proxy_SES) %>%
+  shapiro_test(MPabilitySS)
+# Draw a qq plot by group
+ggqqplot(df_frpm_GMC, x = "MPabilitySS", facet.by = "proxy_SES")
+#Testing for equal variance assumption to run the test
+df_frpm_GMC %>% levene_test(MPabilitySS ~ proxy_SES) 
+
+df_frpm_GMC %>%  cohens_d(MPabilitySS ~ proxy_SES, var.equal = TRUE)
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_frpm_GMC %>% group_by(grade) %>%
+  t_test(MPabilitySS ~ proxy_SES, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/6
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% 
+  mutate(asteriks = ifelse(p <= alpha, "*", "ns")) %>%
+   mutate(cohen.d = lapply(split(df_frpm_GMC, df_frpm_GMC$grade), function(x) {
+    cohen.d(MPabilitySS ~ proxy_SES, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "proxy_SES", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "proxy_SES",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+pValues_tracker = c(pValues_tracker, stat.test2$p);
+
+```
+```{r}
+#False positive rate detection 
+ 
+fdrs<-p.adjust(pValues_tracker, method="BH")
+fdrs
+```
+
+## Do children with different primary language, perform differently in the visual measures? 
+
+```{r}
+# MEP-LET
+df_primL_LET<- df_demo_LET_Available %>% filter(!(grade == 2| grade == 3))
+df_primL_LET %>% group_by(ELStatus) %>% get_summary_stats(LetAbilitySS, type = "mean_sd")
+
+# Count sample size by group
+sample_sizes <- df_primL_LET %>% group_by(grade) %>% 
+  count(ELStatus) %>%
+  rename(SampleSize = n)
+
+bxp <- df_primL_LET %>% 
+  filter(grade!=3) %>%  
+   mutate(ELStatus = factor(ELStatus, levels = c("EO", "EL"))) %>%
+  ggboxplot( x = "ELStatus", y = "LetAbilitySS", 
+  ylab = "MEP-L (ø)", xlab = "" , fill = "ELStatus"
+  ) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+     data = sample_sizes %>% mutate(ordered_group = factor(ELStatus, levels = c("EL", "EO"))),
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x = ordered_group),
+    size = 5
+  ) + scale_fill_manual(values = c("ivory3","darkslategray")) + scale_x_discrete(labels = c( "English", "Spanish")) +theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+#Identify outliers 
+df_primL_LET %>%
+  group_by(ELStatus) %>%
+  identify_outliers(LetAbilitySS)
+
+# Compute Shapiro wilk test by groups
+
+df_primL_LET %>%
+  group_by(ELStatus) %>%
+  shapiro_test(LetAbilitySS)
+# Draw a qq plot by group
+ggqqplot(df_primL_LET, x = "LetAbilitySS", facet.by = "ELStatus")
+#Testing for equal variance assumption to run the test
+df_primL_LET %>% levene_test(LetAbilitySS ~ ELStatus) 
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_primL_LET %>% #filter((langinst =="en" & ELStatus =="EL") | (langinst =="es" & ELStatus =="EL") |  (langinst =="en" & ELStatus =="EO"))  %>% #
+  #filter((taskInst =="es" & ELStatus =="EL") | (taskInst =="en" & ELStatus =="EO")) %>% 
+  filter(grade!=3) %>%
+  group_by(grade) %>%
+  t_test(LetAbilitySS ~ ELStatus, var.equal = FALSE) %>%  #summarise(mean_diff = mean(LetAbilitySS[ELStatus == "EO"]) - mean(LetAbilitySS[ELStatus == "EL"]),
+  ##          SE = sqrt(var(LetAbilitySS[ELStatus == "EO"])/length(LetAbilitySS[ELStatus == "EO"]) + var(LetAbilitySS[ELStatus == "EL"])/length(LetAbilitySS[ELStatus == "EL"])))
+  add_significance()
+stat.test2
+
+df_primL_LET %>%  cohens_d(LetAbilitySS ~ ELStatus, var.equal = TRUE)
+
+# Since there are 9 comparisons in total = we adjust for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% 
+  mutate(asteriks = ifelse(p <= alpha, "*", "ns")) %>%
+ mutate(cohen.d = lapply(split(df_primL_LET, df_primL_LET$grade), function(x) {
+    cohen.d(LetAbilitySS ~ ELStatus, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "ELStatus", dodge = 2.5)
+
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "ELStatus",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, 
+    label = "cohen.d_effect", 
+    color = "gray2", 
+    vjust = 1.5,
+    position = position_dodge(0.8)
+  )
+
+pValues_tracker2 = stat.test2$p;
+
+```
+```{r}
+# MEP-PSE
+df_primL_PSE<- df_demo_PSE_Available %>% filter(!(grade == 2| grade == 3))
+df_primL_PSE %>% group_by(ELStatus) %>% get_summary_stats(pseAbilitySS, type = "mean_sd")
+# Count sample size by group
+sample_sizes <- df_primL_PSE %>% group_by(grade) %>% 
+  count(ELStatus) %>%
+  rename(SampleSize = n)
+bxp <- df_primL_PSE %>% 
+   mutate(ELStatus = factor(ELStatus, levels = c("EO", "EL"))) %>%
+  filter(grade!=3) %>%
+  ggboxplot(x = "ELStatus", y = "pseAbilitySS", 
+  ylab = "MEP-P (ø)", xlab = " ", fill = "ELStatus"
+  ) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+     data = sample_sizes %>% mutate(ordered_group = factor(ELStatus, levels = c("EL", "EO"))),
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x = ordered_group),
+    size = 5
+  ) + scale_fill_manual(values = c("ivory3", "darkslategray")) + scale_x_discrete(labels = c( "English", "Spanish")) +theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+#Identify outliers 
+df_primL_PSE %>%
+  group_by(ELStatus) %>%
+  identify_outliers(pseAbilitySS)
+
+# Compute Shapiro wilk test by goups
+
+df_primL_PSE %>%
+  group_by(ELStatus) %>%
+  shapiro_test(pseAbilitySS)
+# Draw a qq plot by group
+ggqqplot(df_primL_PSE, x = "pseAbilitySS", facet.by = "ELStatus")
+#Testing for equal variance assumption to run the test
+df_primL_PSE %>% levene_test(pseAbilitySS ~ ELStatus) 
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_primL_PSE %>% #filter((langinst =="en" & ELStatus =="EL") | (langinst =="es" & ELStatus =="EL") |  (langinst =="en" & ELStatus =="EO"))  %>%  
+  #filter((taskInst =="es" & ELStatus =="EL") | (taskInst =="en" & ELStatus =="EO"))  %>% 
+  filter(grade!=3) %>%
+  group_by(grade) %>%
+  t_test(pseAbilitySS ~ ELStatus, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+df_demo_PSE_Available %>%  cohens_d(pseAbilitySS ~ ELStatus, var.equal = TRUE)
+
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% 
+  mutate(asteriks = ifelse(p <= alpha, "*", "ns")) %>%
+   mutate(cohen.d = lapply(split(df_primL_PSE, df_primL_PSE$grade), function(x) {
+    cohen.d(pseAbilitySS ~ ELStatus, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "ELStatus", dodge = 2.5)
+
+stat.test_simplified <- stat.test_adjusted %>%
+  select(grade, group1, group2, cohen.d_effect, y.position)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "ELStatus",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_simplified, 
+    label = "cohen.d_effect", 
+    color = "gray2", 
+    vjust = 1.5,
+    position = position_dodge(0.8)
+  )
+
+#pValues_tracker2 = c(pValues_tracker2, stat.test2$p);
+
+```
+```{r}
+# MP 
+df_primL_GMC<- df_demo_GMC_Available %>% filter(!(grade == 2| grade == 3))
+df_primL_GMC %>% group_by(ELStatus) %>% get_summary_stats(MPabilitySS, type = "mean_sd")
+
+sample_sizes <- df_primL_GMC %>% group_by(grade) %>% 
+  count(ELStatus) %>%
+  rename(SampleSize = n) %>% mutate(ELStatus = factor(ELStatus, levels = c("EO", "EL")))
+sample_sizes <- sample_sizes %>%
+  mutate(new_order = case_when(
+    grade == 0 & ELStatus == "EO" ~ 1,
+    grade == 0 & ELStatus == "EL" ~ 2,
+    grade == 1 & ELStatus == "EO" ~ 3,
+    grade == 1 & ELStatus == "EL" ~ 4
+  )) %>%
+  arrange(new_order) %>%
+  select(-new_order)
+
+bxp <- ggboxplot(
+  df_primL_GMC, x = "ELStatus", y = "MPabilitySS", 
+  ylab = "Motion (ø)", xlab = "", fill = "ELStatus"
+  ) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+     data = sample_sizes, aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x= rep(c(1,2),2)),
+    size = 5)  + scale_fill_manual(values = c( "ivory3", "darkslategray")) + scale_x_discrete(labels = c( "English", "Spanish")) +theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_primL_GMC %>% group_by(grade) %>%
+  t_test(MPabilitySS ~ ELStatus, var.equal = TRUE) %>%
+  add_significance()
+stat.test2
+
+df_primL_GMC %>%  cohens_d(MPabilitySS ~ ELStatus, var.equal = TRUE)
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% 
+  mutate(asteriks = ifelse(p <= alpha, "*", "ns")) %>%
+   mutate(cohen.d = lapply(split(df_primL_GMC, df_primL_GMC$grade), function(x) {
+    cohen.d(MPabilitySS ~ ELStatus, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "ELStatus", dodge = 2.5)
+
+stat.test_simplified <- stat.test_adjusted %>%
+  select(grade, group1, group2, cohen.d_effect, y.position)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "ELStatus",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_simplified, 
+    label = "cohen.d_effect", 
+    color = "gray2", 
+    vjust = 1.5,
+    position = position_dodge(0.8)
+  )
+
+
+
+```
+
+### Supplementary Figure 2: Check how the reading measures are across SES and ELStatus 
+
+```{r}
+# MEP-LET
+df_frpm_LET<- df_demo_LET_Available %>% filter(!(grade == 2| grade == 3)) %>% filter(!(proxy_SES == "NotReported")) %>%  mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+  mutate(reading_outcome = wcj_lwi_ss) #if_else(grade == 0,if_else(!is.na(wcm_lwi_ss), wcm_lwi_ss, wcj_lwi_ss), wcj_lwi_ss))
+df_frpm_LET$proxy_SES <- factor(df_frpm_LET$proxy_SES)
+
+# Count sample size by group
+sample_sizes <- df_frpm_LET %>% group_by(grade) %>% filter(complete.cases(wcj_lwi_ss)) %>%
+  count(proxy_SES) %>%
+  rename(SampleSize = n)
+
+bxp <- ggboxplot(
+  df_frpm_LET, x = "proxy_SES", y = "reading_outcome", 
+  ylab = "Reading outcome (LWI)", xlab = "", fill = "proxy_SES"
+  ) + facet_grid(~grade,  labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1")))  + geom_text(
+    data = sample_sizes,
+    aes(label = paste("n =", SampleSize),y=rep(-2.9,4), x= rep(c(1,2),2)),
+    size = 5
+  ) + scale_fill_manual(values = c("skyblue", "slategray")) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+
+bxp
+
+stat.test2 <- df_frpm_LET %>% group_by(grade) %>%
+  t_test(reading_outcome ~ proxy_SES, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjust for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% mutate(asteriks = ifelse(stat.test2$p <= alpha, "*", ifelse(stat.test2$p <= 0.001,"***", "ns"))) %>%
+   mutate(cohen.d = lapply(split(df_frpm_LET, df_frpm_LET$grade), function(x) {
+    cohen.d(reading_outcome ~ proxy_SES, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "proxy_SES", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "proxy_SES",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+```
+```{r}
+# MEP-PSE
+df_frpm_PSE<- df_demo_PSE_Available %>% filter(!(grade == 2| grade == 3)) %>% filter(!(proxy_SES == "NotReported")) %>% mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+  mutate(reading_outcome =  wcj_lwi_ss) #if_else(grade == 0,if_else(!is.na(wcm_lwi_ss), wcm_lwi_ss, wcj_lwi_ss), wcj_lwi_ss))
+df_frpm_PSE$proxy_SES <- factor(df_frpm_PSE$proxy_SES)
+
+# Count sample size by group
+sample_sizes <- df_frpm_PSE %>% group_by(grade) %>% filter(complete.cases(wcj_lwi_ss)) %>%
+  count(proxy_SES) %>%
+  rename(SampleSize = n)
+
+bxp <- ggboxplot(
+  df_frpm_PSE, x = "proxy_SES", y = "reading_outcome", 
+  ylab = "Reading outcome (LWI)", xlab = "", fill = "proxy_SES"
+  ) + facet_grid(~grade,  labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1")))  + geom_text(
+    data = sample_sizes,
+    aes(label = paste("n =", SampleSize),y=rep(-2.9,4), x= rep(c(1,2),2)),
+    size = 5
+  ) +  scale_fill_manual(values = c("skyblue", "slategray")) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+
+bxp
+
+stat.test2 <- df_frpm_PSE %>% group_by(grade) %>%
+  t_test(reading_outcome ~ proxy_SES, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% mutate(asteriks = ifelse(stat.test2$p <= alpha, "*", ifelse(stat.test2$p <= 0.001,"***", "ns"))) %>%
+   mutate(cohen.d = lapply(split(df_frpm_PSE, df_frpm_PSE$grade), function(x) {
+    cohen.d(reading_outcome ~ proxy_SES, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "proxy_SES", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "proxy_SES",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+```
+```{r}
+# Motion
+df_frpm_GMC<- df_demo_GMC_Available %>% filter(!(grade == 2| grade == 3)) %>% filter(!(proxy_SES == "NotReported")) %>% mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+  mutate(reading_outcome = wcj_lwi_ss) #if_else(grade == 0,if_else(!is.na(wcm_lwi_ss), wcm_lwi_ss, wcj_lwi_ss), wcj_lwi_ss))
+df_frpm_GMC$proxy_SES <- factor(df_frpm_GMC$proxy_SES)
+# Count sample size by group
+sample_sizes <- df_frpm_GMC %>% group_by(grade) %>% filter(complete.cases(wcj_lwi_ss)) %>%
+  count(proxy_SES) %>%
+  rename(SampleSize = n)
+
+bxp <- ggboxplot(
+  df_frpm_GMC, x = "proxy_SES", y = "reading_outcome", 
+  ylab = "Reading outcome (LWI)", xlab = "", fill = "proxy_SES") + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1")))  + geom_text(
+    data = sample_sizes,
+    aes(label = paste("n =", SampleSize),y=rep(-2.9,4), x= rep(c(1,2),2)),
+    size = 5
+  ) +  scale_fill_manual(values = c("skyblue", "slategray")) + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+
+bxp
+
+stat.test2 <- df_frpm_GMC %>% group_by(grade) %>%
+  t_test(reading_outcome ~ proxy_SES, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% mutate(asteriks = ifelse(stat.test2$p <= alpha, "*", ifelse(stat.test2$p <= 0.001,"***", "ns"))) %>%
+   mutate(cohen.d = lapply(split(df_frpm_GMC, df_frpm_GMC$grade), function(x) {
+    cohen.d(reading_outcome ~ proxy_SES, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "proxy_SES", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "proxy_SES",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+```
+```{r}
+# MEP-LET
+df_primL_LET <- df_primL_LET %>% mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+  mutate(reading_outcome = wcj_lwi_ss)
+# Count sample size by group
+sample_sizes <- df_primL_LET %>% group_by(grade) %>% 
+  count(ELStatus) %>%
+  rename(SampleSize = n)
+bxp <- df_primL_LET %>% 
+   mutate(ELStatus = factor(ELStatus, levels = c("EO", "EL"))) %>%
+  filter(grade!=3) %>%
+  ggboxplot(x = "ELStatus", y = "reading_outcome", 
+  ylab = "Reading_outcome (LWI)", xlab = " ", fill = "ELStatus"
+  ) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+    data = sample_sizes,
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x= rep(c(1,2),2)),
+    size =5
+  ) + scale_fill_manual(values = c("ivory3", "darkslategray")) + scale_x_discrete(labels = c( "English", "Spanish"))  + theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_primL_LET %>% #filter((langinst =="en" & ELStatus =="EL") | (langinst =="es" & ELStatus =="EL") |  (langinst =="en" & ELStatus =="EO"))  %>%  
+  #filter((taskInst =="es" & ELStatus =="EL") | (taskInst =="en" & ELStatus =="EO"))  %>% 
+  filter(grade!=3 | grade!=2) %>%
+  group_by(grade) %>%
+  t_test(reading_outcome ~ ELStatus, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/12) %>% mutate(asteriks = ifelse(stat.test2$p <= alpha, "*", ifelse(stat.test2$p <= 0.001,"***", "ns"))) %>%
+   mutate(cohen.d = lapply(split(df_primL_LET, df_primL_LET$grade), function(x) {
+    cohen.d(reading_outcome ~ ELStatus, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "ELStatus", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "ELStatus",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+pValues_tracker2 = c(pValues_tracker2, stat.test2$p);
+
+
+```
+
+```{r}
+# MEP-PSE
+df_primL_PSE <- df_primL_PSE %>% mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+  mutate(reading_outcome = wcj_lwi_ss)
+# Count sample size by group
+sample_sizes <- df_primL_PSE %>% group_by(grade) %>% 
+  count(ELStatus) %>%
+  rename(SampleSize = n) %>% mutate(ELStatus = factor(ELStatus, levels = c("EO", "EL")))
+sample_sizes <- sample_sizes %>%
+  mutate(new_order = case_when(
+    grade == 0 & ELStatus == "EO" ~ 1,
+    grade == 0 & ELStatus == "EL" ~ 2,
+    grade == 1 & ELStatus == "EO" ~ 3,
+    grade == 1 & ELStatus == "EL" ~ 4
+  )) %>%
+  arrange(new_order) %>%
+  select(-new_order)
+bxp <- df_primL_PSE %>% 
+   mutate(ELStatus = factor(ELStatus, levels = c("EO", "EL"))) %>%
+  filter(grade!=3) %>%
+  ggboxplot(x = "ELStatus", y = "reading_outcome", 
+  ylab = "Reading_outcome (LWI)", xlab = " ", fill = "ELStatus"
+  ) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+    data = sample_sizes,
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x= rep(c(1,2),2)),
+    size = 5
+  ) + scale_fill_manual(values = c("ivory3", "darkslategray")) + scale_x_discrete(labels = c( "English", "Spanish")) +theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_primL_PSE %>% mutate(ELStatus = factor(ELStatus, levels = c("EL", "EO"))) %>% #filter((langinst =="en" & ELStatus =="EL") | (langinst =="es" & ELStatus =="EL") |  (langinst =="en" & ELStatus =="EO"))  %>%  
+  #filter((taskInst =="es" & ELStatus =="EL") | (taskInst =="en" & ELStatus =="EO"))  %>% 
+  filter(grade!=3 | grade!=2) %>%
+  group_by(grade) %>%
+  t_test(reading_outcome ~ ELStatus, var.equal = FALSE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/6) %>% mutate(asteriks = ifelse(stat.test2$p <= alpha, "*", ifelse(stat.test2$p <= 0.001,"***", "ns"))) %>%
+   mutate(cohen.d = lapply(split(df_primL_PSE, df_primL_PSE$grade), function(x) {
+    cohen.d(reading_outcome ~ ELStatus, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "ELStatus", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "ELStatus",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+pValues_tracker2 = c(pValues_tracker2, stat.test2$p);
+
+```
+```{r}
+# MP 
+df_primL_GMC <- df_primL_GMC %>% mutate(across(c(wcj_lwi_ss,wcj_wa_ss,wcj_spelling_ss,wcm_lwi_ss), as.numeric)) %>%
+  mutate(reading_outcome = wcj_lwi_ss)
+#df_demo_GMC_Available<- df_demo_GMC_Available %>% filter(grade !=3) 
+df_primL_GMC %>% group_by(ELStatus) %>% get_summary_stats(MPabilitySS, type = "mean_sd")
+
+sample_sizes <- df_primL_GMC %>% group_by(grade) %>% 
+  count(ELStatus) %>%
+  rename(SampleSize = n)
+
+bxp <- ggboxplot(
+  df_primL_GMC, x = "ELStatus", y = "reading_outcome", 
+  ylab = "Reading_outcome (LWI)", xlab = "", fill = "ELStatus"
+  ) + facet_grid(~grade, labeller = labeller(grade = c(
+    "0" = "K",
+    "1" = "1"))) + geom_text(
+    data = sample_sizes,
+    aes(label = paste("n =", SampleSize),y=rep(-4.3,4), x= rep(c(1,2),2)),
+    size = 5
+  ) + scale_fill_manual(values = c("darkslategray", "ivory3")) + scale_x_discrete(labels = c(  "Spanish", "English")) +theme(axis.text.x = element_text(size = 18),  # Adjust font size of x-axis labels
+        axis.text.y = element_text(size = 18), axis.title.y.left = element_text(size = 18), legend.position = "none", strip.text = element_text(size = 18),  #  Increase facet label (panel heading) font size
+    text = element_text(size = 18)) # Increase overall text size
+bxp
+
+#Levene's test is not significant - therefore we can proceed with the independent samplet t-test otherwise resort to the Weltch ttest
+stat.test2 <- df_primL_GMC %>% group_by(grade) %>%
+  t_test(reading_outcome ~ ELStatus, var.equal = TRUE) %>%
+  add_significance()
+stat.test2
+
+# Since there are 9 comparisons in total = we adjsut for those multiple t-tests
+alpha = 0.05/12
+# Add adjusted p-values to the figure
+stat.test_adjusted <- stat.test2 %>%
+  mutate(p.adj = p/6) %>% mutate(asteriks = ifelse(stat.test2$p <= alpha, "*", ifelse(stat.test2$p <= 0.001,"***", "ns"))) %>%
+   mutate(cohen.d = lapply(split(df_primL_GMC, df_primL_GMC$grade), function(x) {
+    cohen.d(reading_outcome ~ ELStatus, data = x)$cohen.d
+  })) %>%
+  mutate(cohen.d_effect = unlist(lapply(cohen.d, function(x) round(x[2], 3)))) %>%
+  add_xy_position(x = "ELStatus", dodge = 2.5)
+
+stat.test <- stat.test_adjusted %>% add_xy_position(x = "ELStatus",dodge =2.5)
+bxp + 
+  stat_pvalue_manual(stat.test,label="asteriks"  ,tip.length = 0.003,position = position_dodge(0.8), color = "gray2") +
+  stat_pvalue_manual(
+    stat.test_adjusted, label = "cohen.d_effect", tip.length = 0.03,
+    position = position_dodge(1.2), color = "gray2", vjust = 1.5
+  )
+
+pValues_tracker2 = c(pValues_tracker2, stat.test2$p);
+
+```
+## False detection rate 
+
+```{r eval= FALSE}
+fdrs2<-p.adjust(pValues_tracker2, method="BH")
+fdrs2
+```
