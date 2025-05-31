@@ -1,0 +1,740 @@
+---
+title: "ManuscriptNHB-ROC-AUC-featureExtraction"
+output: html_notebook
+---
+All feature importance plots and ROC analysis code for the Manuscript titled: ""
+
+```{r}
+#Load required libraries 
+library(rstatix)
+library(plotrix)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(psych)
+library(stargazer)
+library(gtsummary)
+library(ggpubr)
+library(ggExtra)
+library(cutpointr)
+library(pROC)
+library(plotROC)
+library(caret)
+library(randomForest)
+library(ggplot2)
+library(mice)
+```
+#Boruta function
+```{r include=FALSE}
+ # Boruta Processing
+  # =================
+  # from: https://stackoverflow.com/questions/73415232/how-to-use-ggplot2-to-plot-box-plots-from-borutas-results-in-r
+  process_the_Boruta_data <- function(x, whichShadow=c(FALSE,FALSE,FALSE),
+                                      colCode=c('green','yellow','red','blue', "darkslategray","ivory4" ),
+                                      col=NULL) {
+    if(is.null(x$ImpHistory))
+      stop('Importance history was not stored during the Boruta run.')
+    
+    #Removal of -Infs and conversion to a list
+    lz <- lapply(1:ncol(x$ImpHistory),
+                 function(i) x$ImpHistory[is.finite(x$ImpHistory[,i]),i])
+    colnames(x$ImpHistory) -> names(lz)
+    
+    #Selection of shadow meta-attributes
+    numShadow <- sum(whichShadow)
+    lz[c(rep(TRUE,length(x$finalDecision)),whichShadow)] -> lz
+    
+    generateCol<-function(x,colCode,col,numShadow){
+      #Checking arguments
+      if(is.null(col) & length(colCode)!=6)
+        stop('colCode should have 4 elements.')
+      #Generating col
+      if(is.null(col)){
+        rep(colCode[4],length(x$finalDecision)+numShadow)->cc
+        cc[c(x$finalDecision=='Confirmed',rep(FALSE,numShadow))]<-colCode[1]
+        cc[c(x$finalDecision=='Tentative',rep(FALSE,numShadow))]<-colCode[2]
+        cc[c(x$finalDecision=='Rejected',rep(FALSE,numShadow))]<-colCode[3]
+        col=cc
+      }
+      return(col)
+    }
+    
+    #Generating color vector
+    col <- generateCol(x, colCode, col, numShadow)
+     
+    #Ordering boxes due to attribute median importance
+    ii<-order(sapply(lz,stats::median))
+    lz[ii] -> lz
+    col <- col[ii]
+    lz_df <- do.call(rbind.data.frame, lz)
+    df <- as.data.frame(t(lz_df))
+    names(df) <- names(lz)
+    rownames(df) <- NULL
+    return(df)
+  }
+```
+```{r}
+#Linear models and correlation plots 
+#TRy to check how much these dfs over lap 
+
+# source('~/Documents/REDCapR.R') - not taking this route because the df_plot has deidentified student tracking ids 
+
+df_plot <- read.csv("~/Library/CloudStorage/GoogleDrive-maha10@stanford.edu/My Drive/VisualMeasuresAsLanguageAgnosticScreeners/Analysis_Repo/df_plot.csv")
+
+#read.csv("/Users/maharamamurthy/Library/CloudStorage/GoogleDrive-maha10@stanford.edu/My Drive/VisualMeasuresAsLanguageAgnosticScreeners/Analysis_Repo/df_plot_long.csv")
+
+
+```
+
+## Fit a random forest model to predict risk - and use leave one out cross validation method to ensure model stability 
+Here the assumption is that we go with a combined model with visual and language measures this is because we dont know the prevelence of groups with specific issues and the heterogeneity is very unclear! 
+
+```{r}
+set.seed(112)
+percentile_20 <- quantile(df_plot$wcj_lwi_ss, probs = 0.2, na.rm = TRUE)
+percentile_20
+df_risk <- df_plot %>%
+    mutate(risk = ifelse(wcj_lwi_ss <= percentile_20, 1, 0))
+
+```
+
+```{r}
+# Kinder 
+df_risk_K <- df_risk %>% filter(grade ==0) #%>% filter(complete.cases(LetAbilitySS, pseAbilitySS, MPabilitySS, nwr_ucat, srt_ucat, del_ucat, ble_ucat, rao, dgs, risk))
+# G1
+df_risk_1 <- df_risk %>% filter(grade ==1) #%>% filter(complete.cases(LetAbilitySS, pseAbilitySS, MPabilitySS, nwr_ucat, srt_ucat, del_ucat, evo_ucat, rao, dgs, risk))
+
+perform_loocvRF <- function(data, formula) {
+  n <- nrow(data)
+  predictions <- numeric(n)
+# Perform LOO-CV
+for (i in 1:n) {
+  # Split data into training and test sets
+  train <- data[-i, ]
+  test <- data[i, ]
+  
+  ### train RF 
+  # Train random forest model using important features
+  rf_model <- randomForest(formula, data = train, ntree = 100)
+  
+  # Make prediction for left-out sample
+  predictions[i] <- predict(rf_model, newdata = test, type = "prob")[, 2]
+  #print(paste("Iteration", i))
+  #print(class(predictions))
+  #print(dim(predictions))
+}
+
+# Calculate metrics
+  actual <- data$risk  # Assuming 'risk' is your binary outcome variable
+  roc_obj <- roc(actual, predictions)
+  auc <- auc(roc_obj)
+  
+  # Find optimal threshold
+  #### optimal_threshold <- coords(roc_obj, "best", ret = "threshold")$threshold
+  # changing best point to 0.5 - see typically this is the point
+  optimal_threshold <- 0.5 #coords(roc_obj, "best", ret = "threshold")$threshold
+  # Calculate accuracy, sensitivity, and specificity
+  predicted_class <- ifelse(predictions > optimal_threshold, 1, 0)
+  cm <- confusionMatrix(factor(predicted_class), factor(actual), positive = "0")
+  f1_score <- cm$byClass['F1']
+  kappa <- cm$overall['Kappa']
+  brier_score <- mean((predictions - as.numeric(actual))^2)
+  
+  # Calculate metrics at Youden's threshold (new)
+  youden_threshold <- coords(roc_obj, "best", ret = "threshold", best.method = "youden")$threshold
+  predicted_class_youden <- factor(ifelse(predictions > youden_threshold, 1, 0), levels = c(0, 1))
+  cm_youden <- confusionMatrix(predicted_class_youden, factor(actual), positive = "1")
+  
+  ci <- ci.auc(roc_obj)
+  return(list(cm = cm,
+              auc = auc, 
+              ci_lower = ci[1],
+              ci_upper = ci[3],
+              accuracy = cm$overall["Accuracy"],
+              sensitivity = cm$byClass["Sensitivity"],
+              specificity = cm$byClass["Specificity"],
+              ppv = cm$byClass["Pos Pred Value"],
+              sensitivity_youden = cm_youden$byClass["Sensitivity"],
+              specificity_youden = cm_youden$byClass["Specificity"],
+              ppv_youden = cm_youden$byClass["Pos Pred Value"],
+              youden_threshold = youden_threshold,
+              predictions = predictions,
+              actual = actual, 
+              optimal_threshold =optimal_threshold,
+              f1_score = f1_score, # avg of precision ( true +ve s / all classified as positives) and recall (what proportion of actual +ves cases do you catch)
+              kappa = kappa, #cohen's kappa inter rater agreement 
+              brier_score = brier_score))# like mean sq error - most important the prob that the predprob are cloose to true probs))
+}
+```
+
+## K - end-of-year reading outcome  
+```{r}
+# Random Forests 
+set.seed(343)
+df_risk_K$risk <- as.factor(df_risk_K$risk)
+df_risk_K <- df_risk_K %>% filter(!is.na(df_risk_K$risk))
+
+df_risk_K_RF <- df_risk_K %>% select(LetAbilitySS, pseAbilitySS,MPabilitySS, risk, student_tracking_id)
+df_risk_K_visual_RF <- df_risk_K_RF %>% filter(complete.cases(LetAbilitySS, pseAbilitySS,MPabilitySS, risk))
+
+# Visual model
+visual_formula <- risk ~  LetAbilitySS + pseAbilitySS + MPabilitySS
+RF_visual_results <- perform_loocvRF(df_risk_K_visual_RF, visual_formula)
+
+df_risk_K_RF <- df_risk_K %>% #select(srt_ucat , rao , del_ucat,  risk) #
+  select(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, risk, student_tracking_id) #
+
+df_risk_K_lang_RF <-df_risk_K_RF %>% filter(complete.cases(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, risk)) 
+
+#Language Model
+language_formula <- risk ~ srt_ucat + rao +  del_ucat + ble_ucat + nwr_ucat + dgs
+RF_lang_results <- perform_loocvRF(df_risk_K_lang_RF, language_formula)
+
+df_risk_K_RF <- df_risk_K %>% select(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk)
+df_risk_K_comb_RF <- df_risk_K_RF %>% filter(complete.cases(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk))
+
+#Combined model 
+combined_formula <- risk ~ srt_ucat + rao +  del_ucat + ble_ucat + nwr_ucat + dgs+ LetAbilitySS + pseAbilitySS + MPabilitySS
+RF_comb_results <- perform_loocvRF(df_risk_K_comb_RF, combined_formula)
+
+# Calculate the ROC curve
+roc_objV <- roc(RF_visual_results$actual, RF_visual_results$predictions)
+roc_objL <- roc(RF_lang_results$actual, RF_lang_results$predictions)
+roc_objVL <- roc(RF_comb_results$actual, RF_comb_results$predictions)
+
+# Calculate AUC values
+auc_V <- auc(roc_objV)
+auc_L <- auc(roc_objL)
+auc_VL<- auc(roc_objVL)
+
+# Create data frames for ggplot
+df_roc_V <- data.frame(FPR = 1 - roc_objV$specificities, TPR = roc_objV$sensitivities, Model = "Visual")
+df_roc_L <- data.frame(FPR = 1 - roc_objL$specificities, TPR = roc_objL$sensitivities, Model = "Language")
+df_roc_VL <- data.frame(FPR = 1 - roc_objVL$specificities, TPR = roc_objVL$sensitivities, Model = "Visual + Language")
+df_roc <- rbind(df_roc_V, df_roc_L,df_roc_VL)
+
+
+# Create ggplot
+ggplot(df_roc, aes(x = FPR, y = TPR, color = as.factor(Model))) +
+  geom_line(size = 1) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray") +
+  labs(title = "",
+       x = "False Positive Rate",
+       y = "True Positive Rate") +
+  scale_color_manual(values = c("Visual" = "orchid4", "Language" = "palegreen4", "Visual + Language" = "turquoise4")) +
+  theme_bw() +
+  annotate("text", x = 0.45, y = 0.25, 
+           label = paste("AUC (Visual):", round(auc_V, 3)),
+           color = "orchid4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.20, 
+           label = paste("AUC (Language):", round(auc_L, 3)),
+           color = "palegreen4",
+           hjust = 0) +
+  annotate("text", x = 0.45, y = 0.3, 
+           label = paste("AUC (Visual+Language):", round(auc_VL, 3)),
+           color = "turquoise4",
+           hjust = 0) +
+  annotate("text", x = 0, y = 1, 
+           label = paste("n (Visual): 157"),
+           color = "orchid4",
+           hjust = 0, 
+           size =2) +
+  annotate("text", x = 0, y = 0.95, 
+           label = paste("n (Language):242"),
+           color = "palegreen4",
+           hjust = 0, size=2) +
+  annotate("text", x = 0, y = 0.90, 
+           label = paste("n (Visual+Language):108"),
+           color = "turquoise4",
+           hjust = 0,size=2) +
+  coord_equal()
+
+# Statistical test for AUC difference
+auc_test <- roc.test(roc_objV, roc_objL)
+print(auc_test)
+
+auc_test2 <- roc.test(roc_objVL, roc_objL)
+print(auc_test2)
+
+auc_test3 <- roc.test(roc_objVL, roc_objV)
+print(auc_test3)
+RF_comb_results$cm
+```
+
+AUC table - 
+
+Here we can generate which predictors are the best combinations - 
+
+```{r}
+# Function to perform LOOCV for logistic regression with custom threshold - this is also Random forest so everything matches! 
+set.seed(9832)
+perform_loocv <- function(data, formula) {
+  n <- nrow(data)
+  predictions <- numeric(n)
+  weight_sensitivity = 0.7
+  for (i in 1:n) {
+    train <- data[-i, ]
+    test <- data[i, ]
+    #model <- glm(formula, data = train, family = binomial)
+    #predictions[i] <- predict(model, newdata = test, type = "response")
+    
+    model <- randomForest(formula, data = train, ntree = 100, seed = 9832)
+    predictions[i] <- predict(model, newdata = test, type = "prob")[, 2]
+  }
+  actual <- data$risk
+  roc_obj <- pROC::roc(actual, predictions)
+  auc <- pROC::auc(roc_obj)
+  coords <- coords(roc_obj, "all")
+  index <- which.min(abs(coords$sensitivity - 0.7))
+  optimal_threshold <- coords$threshold[index]
+  predicted_class <- factor(ifelse(predictions <= optimal_threshold, 0, 1), levels = c(0, 1))
+  actual <- factor(actual, levels = c(0, 1))
+  cm <- caret::confusionMatrix(predicted_class, actual)
+  ci <- pROC::ci.auc(roc_obj)
+  list(
+    auc = auc,
+    ci_lower = ci[1],
+    ci_upper = ci[3],
+    accuracy = cm$overall["Accuracy"],
+    sensitivity = cm$byClass["Sensitivity"],
+    specificity = cm$byClass["Specificity"]
+  )
+}
+
+# Function to create and evaluate models
+create_models <- function(data, outcome, predictors) {
+  results <- list()
+  for (i in 1:length(predictors)) {
+    for (combo in combn(predictors, i, simplify = FALSE)) {
+      formula <- as.formula(paste("risk", "~", paste(combo, collapse = " + ")))
+      model_name <- paste(combo, collapse = "_")
+      results[[model_name]] <- perform_loocv(data, formula)
+    }
+  }
+  return(results)
+}
+
+# Define predictors and outcomes
+predictors1 <- c( "del_ucat", "ble_ucat", "nwr_ucat", "srt_ucat",  "dgs", "rao","LetAbilitySS", "pseAbilitySS", "MPabilitySS")    
+predictors2 <- c( "del_ucat", "evo_ucat", "nwr_ucat", "srt_ucat",  "dgs", "rao","LetAbilitySS", "pseAbilitySS", "MPabilitySS")  
+
+#outcomes <- c("wcj_lwi_ss", "wcj_wa_ss") #, "wcj_lwi_ss_24", "wcj_wa_ss_24", "wcj_c_reading_24", "wcj_c_BRS_24", "wcj_c_boardreading_24")
+outcomes <- c("wcj_lwi_ss", "wcj_wa_ss", "wcj_lwi_ss_24", "wcj_wa_ss_24", "wcj_c_reading_24", "wcj_c_BRS_24", "wcj_c_boardreading_24")
+
+# Create empty results dataframe
+results_df <- data.frame(
+  Risk_classification = character(),
+  Grade = numeric(),
+  Predictors = character(),
+  AUC = numeric(),
+  stringsAsFactors = FALSE
+)
+
+# Prepare data frame 
+df_AUC <- df_risk_imputed %>% filter(complete.cases(grade)) %>% select(-c(lsi_ucat,lco, proxy_SES, langflu, potential_study_id, rptglng, ELStatus,risk,risk_eoy1, lnc)) 
+# Loop through outcomes and grades
+for (outcome in outcomes) {
+# Calculate risk for this outcome
+  #df_risk_AUC <- df_AUC
+  df_risk_AUC <- calculate_risk(df_AUC,outcome)
+  #df_risk_AUC$risk <- as.factor(df_risk_AUC$risk)
+  ## Insert code to filter for ELstatus 
+  #%>% filter(ELStatus == "EL")
+  
+  for (grade in c(0, 1)) {
+    if (grade == 0) {
+        predictors = predictors1
+        df_temp <- df_risk_AUC %>% select(-c(evo_ucat))
+        #df <- df_temp %>% filter(grade == 0)
+    }
+    else { predictors = predictors2
+           df_temp <- df_risk_AUC %>% select(-c(ble_ucat))
+           #df <- df_temp %>% filter(grade == 1)
+    }
+    print(grade)
+    this_grade = grade;
+    # Select appropriate dataframe
+    df <- df_temp %>% filter(grade == this_grade)
+    df$risk <- as.factor(df$risk)
+    # Create and evaluate models
+    models <- create_models(df, outcome, predictors)
+    print(outcome)
+    # Add results to dataframe
+    for (model_name in names(models)) {
+        print(outcome)
+        results_df <- rbind(results_df, data.frame(
+        Risk_classification = outcome,
+        Grade = grade,
+        Predictors = model_name,
+        AUC = models[[model_name]]$auc,
+        Accuracy = models[[model_name]]$accuracy,
+        stringsAsFactors = FALSE
+      ))
+    }
+  }
+}
+
+# Sort results by Risk_classification, Grade, and AUC
+results_df <- results_df %>%
+  arrange(Risk_classification, Grade, desc(AUC))
+# Find the best models based on AUC and Accuracy
+best_models <- results_df %>%
+   #filter(Accuracy > 0.5) %>%
+    mutate(
+    AUC_rounded = round(AUC, 4),
+    Accuracy_rounded = round(Accuracy, 4)
+  ) %>%
+  group_by(Grade,Risk_classification) %>%
+  arrange(desc(AUC_rounded),desc(Accuracy_rounded)) %>%
+  slice(1) %>%
+  ungroup()
+write_csv(results_df, "finalAUC-TableManuscript-allpredictors.csv")
+# Print the best models for each grade
+results_df <- read_csv('/Users/maharamamurthy/Library/CloudStorage/GoogleDrive-maha10@stanford.edu/My Drive/VisualMeasuresAsLanguageAgnosticScreeners/NHB/bigAUCTable2-withoutMEPL.csv')
+best_models
+
+
+```
+
+# Feature Extractions
+Using Boruta package 
+
+```{r}
+
+#predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "dgs")
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "del_ucat", "ble_ucat", "dgs", "nwr_ucat")
+name_mapping <- c(
+  evo_ucat = "Vocabulary",
+  dgs = "Digit Span",
+  LetAbilitySS = "MEP-L",
+  pseAbilitySS = "MEP-P",
+  MPabilitySS = "Motion",
+  rao = "Rapid Automatic Naming",
+  srt_ucat = "Sentence Repetition",
+  nwr_ucat = "Non-word Repetition",
+  del_ucat = "Deletion",
+  ble_ucat = "Blending"
+)
+
+df_risk_K_EY1_imputed <- df_risk_K_long %>% select(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk_eoy1) %>% filter(complete.cases(ble_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS,risk_eoy1)) %>% rename(risk = risk_eoy1)
+
+df_risk_K <- df_risk_K_EY1_imputed
+
+#imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+#df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_K, doTrace = 0, maxRuns = 100, ntrees = 100)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+# Plot the data:
+plot2 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot2
+
+```
+
+Checking Bourata for the balanced model! 
+
+```{r}
+
+# Balance the dataset using ROSE (Random Over-Sampling Examples)
+set.seed(15224)  # For reproducibility
+balanced_data <- ROSE(risk ~ ., data = df_risk_K_EY1_imputed, seed = 15224)$data
+
+# Check class distribution
+table(balanced_data$risk)
+
+## Now use this balanced table 
+
+df_risk_K <- balanced_data
+
+#imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+#df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_K, doTrace = 0, maxRuns = 100, ntrees = 100)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot2 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot2
+```
+
+First grade 
+```{r}
+#predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "dgs")
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "del_ucat", "evo_ucat", "dgs", "nwr_ucat")
+name_mapping <- c(
+  evo_ucat = "Vocabulary",
+  dgs = "Digit Span",
+  LetAbilitySS = "MEP-L",
+  pseAbilitySS = "MEP-P",
+  MPabilitySS = "Motion",
+  rao = "Rapid Automatic Naming",
+  srt_ucat = "Sentence Repetition",
+  nwr_ucat = "Non-word Repetition",
+  del_ucat = "Deletion",
+  ble_ucat = "Blending"
+)
+
+df_risk_1_EY1_imputed <- df_risk_1_long %>% select(evo_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS, risk_eoy1) %>% filter(complete.cases(evo_ucat, rao, del_ucat, dgs,nwr_ucat,srt_ucat, LetAbilitySS, pseAbilitySS, MPabilitySS,risk_eoy1)) %>% rename(risk = risk_eoy1)
+
+
+# df_risk_1 <- df_risk_1_comb_RF
+df_risk_1 <- df_risk_1_EY1_imputed
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_1, doTrace = 0, maxRuns = 100, ntrees = 100)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot3 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot3
+```
+
+First grade using balanced data
+
+```{r}
+# Balance the dataset using ROSE (Random Over-Sampling Examples)
+set.seed(15224)  # For reproducibility
+balanced_data <- ROSE(risk ~ ., data = df_risk_1_EY1_imputed, seed = 15224)$data
+
+# Check class distribution
+table(balanced_data$risk)
+
+## Now use this balanced table 
+
+df_risk_1 <- balanced_data
+
+#imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+#df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_1, doTrace = 0, maxRuns = 100, ntrees = 100)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot4 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot4
+```
+
+Now the same feature extraction for longitudinal data 
+
+```{r}
+set.seed(45523)
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "del_ucat", "ble_ucat", "dgs", "nwr_ucat")
+
+df_risk_K <- df_risk_K_comb_RFlong 
+
+#imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+#df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_K, doTrace = 0, maxRuns = 100, ntrees = 100, seed = 45523)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot5 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot5
+```
+
+Now balanced synthetic model 
+```{r}
+set.seed(9524)  # For reproducibility
+balanced_data <- ROSE(risk ~ ., data = df_risk_K_comb_RFlong, seed = 9524)$data
+
+# Check class distribution
+table(balanced_data$risk)
+
+## Now use this balanced table 
+
+df_risk_K <- balanced_data
+
+#imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+#df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_K, doTrace = 0, maxRuns = 100, ntrees = 100, seed = 9524)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot6 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot6
+```
+
+First grade - reading outcomes a year later 
+
+```{r}
+set.seed(856)
+predictors <- c("LetAbilitySS", "pseAbilitySS", "MPabilitySS", "srt_ucat", "rao", "del_ucat", "evo_ucat", "dgs", "nwr_ucat")
+
+df_risk_1 <- df_risk_1_comb_RFlong %>% select(-c(LetAbilitySS))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_1, doTrace = 0, maxRuns = 100, ntrees = 100, seed = 856)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+# Plot the data:
+plot7 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot7
+```
+
+now balanced model 
+```{r}
+set.seed(9524)  # For reproducibility
+balanced_data <- ROSE(risk ~ ., data = df_risk_1, seed = 9524)$data
+
+# Check class distribution
+table(balanced_data$risk)
+
+## Now use this balanced table 
+
+df_risk_1 <- balanced_data
+
+#imp <- mice(df_risk_G1, print =FALSE, seed=1 )
+#df_risk_G1 <- as.data.frame(mice::complete(imp,1))
+
+boruta_result <- Boruta(risk ~ ., data = df_risk_1, doTrace = 0, maxRuns = 100, ntrees = 100, seed = 9524)
+boruta_result
+
+# Apply the function:
+boruta_clean <- process_the_Boruta_data(boruta_result)
+
+
+# Plot the data:
+plot8 <- boruta_clean %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(y = fct_reorder(name, value, median), x = value)) +
+  geom_boxplot(color = "darkslategray") +
+ # labs(title = "First Grade") +
+  theme_bw() +
+  theme(
+        axis.text.x = element_text(angle = 0,
+                                   vjust = 1,
+                                   hjust = 1,
+                                   size = 15),
+         axis.text.y = element_text(size = 16),  # Added y-axis text size
+        axis.title.x = element_text(size = 18)) +
+labs(x = "Median importance value", y = "") +
+  scale_y_discrete(labels = name_mapping)
+plot8
+```
+
