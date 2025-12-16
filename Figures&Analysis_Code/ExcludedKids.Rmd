@@ -1,0 +1,100 @@
+---
+title: "ExcludedKids"
+output: html_notebook
+---
+# get the profiles of those excluded kids 
+
+```{r}
+df_letters_excluded<- Letters #df_letters_excluded#read_csv("MEP_L_excluded.csv")
+df_psuedoL_excluded<- pseudoLetters#read_csv("MEP_P_excluded.csv")
+```
+
+
+```{r}
+df_letters_excluded <- df_letters_excluded %>% dplyr::select(c(subID,LetAbility, LetAbilitySE)) %>% rename(student_tracking_id = subID)
+df_psuedoL_excluded <- df_psuedoL_excluded %>% dplyr::select(c(subID,pseLAbility, pseLAbilitySE)) %>% rename(student_tracking_id = subID)
+source('~/Documents/REDCapR.R')
+df_ktea = df %>% filter(redcap_event_name == "spring2024_arm_1") 
+df_letters_excluded <- merge(df_letters_excluded, df_ktea, by = "student_tracking_id")
+df_psuedoL_excluded <- merge(df_psuedoL_excluded, df_ktea, by = "student_tracking_id")
+
+# Add a source indicator to each data frame
+df_letters_excluded$source <- "MEPL"
+df_psuedoL_excluded$source <- "MEPP"
+
+# Combine the data frames into one
+combined_df <- bind_rows(df_letters_excluded, df_psuedoL_excluded)
+
+# Ensure wcj_lwi_ss is numeric
+combined_df$wcj_lwi_ss <- as.numeric(combined_df$wcj_lwi_ss)
+means <- combined_df %>%
+  group_by(source) %>%
+  summarise(mean_wcj_lwi_ss = mean(wcj_lwi_ss, na.rm = TRUE))
+# Create the combined histogram plot
+combined_plot <- ggplot(combined_df, aes(x = wcj_lwi_ss, fill = source)) +
+  geom_histogram(alpha = 0.4, position = "identity", binwidth = 5, color = "black") +  # Adjust binwidth as needed
+  labs(
+       x = "WJ-LWI",
+       y = "Count") +
+  scale_fill_manual(values = c("MEPL" = "deepskyblue4", "MEPP" = "aquamarine3")) +
+  scale_color_manual(values = c("MEPL" = "deepskyblue4", "MEPP" = "aquamarine3")) +
+  theme_minimal() +
+  theme(legend.position = "left") 
+
+# Display the plot
+print(combined_plot)
+```
+# Do the same for MP
+
+```{r}
+df_MP_raw <- read_csv("~/HoneyHunt/data4MIRT_mp_Winter2023.csv")  
+# MP_WINTER2023_completions_data.csv")
+```
+```{r}
+
+df_partMP<- df_MP_raw %>% group_by(student_tracking_id, clean_school_id, coherence) %>%  summarize(total_correct = sum(accuracy), totalTrails = n(),
+                                                                                  totalTimeTaken = mean(rt),taskAccuracy = total_correct/totalTrails)
+
+df_partMP_filter<- df_partMP %>% filter(coherence == 0.96, taskAccuracy > 0.56) %>% dplyr::select(student_tracking_id)
+
+#Get those excluded
+df_partMP_excluded <- anti_join(df_partMP, df_partMP_filter) %>% group_by(student_tracking_id)
+
+df_partMP_excluded <- df_partMP_excluded %>% 
+  mutate(
+    student_tracking_id_cleaned = ifelse(str_starts(student_tracking_id, "-"),
+                                         paste0("A00_", str_sub(student_tracking_id, start = -3)),
+                                         student_tracking_id)) %>% dplyr::rename(student_tracking_id_VOID = student_tracking_id) %>% 
+    mutate( student_tracking_id_cleaned_2nd = ifelse(str_starts(student_tracking_id_cleaned, "16"),
+                                             paste0("A00_", str_sub(student_tracking_id_cleaned, start = -3)), NA))%>% 
+  mutate(
+    student_tracking_id_cleaned_3rd = ifelse(str_starts(student_tracking_id_cleaned, "21"),
+                                             paste0("A00_", str_sub(student_tracking_id_cleaned, start = -3)),
+                                             NA)
+  )
+df_partMP_excluded <- df_partMP_excluded %>% mutate( student_tracking_id = ifelse(!is.na(student_tracking_id_cleaned_3rd),
+                                 student_tracking_id_cleaned_3rd,
+                                 ifelse(!is.na(student_tracking_id_cleaned_2nd),
+                                        student_tracking_id_cleaned_2nd,
+                                        student_tracking_id_cleaned)))
+
+df_MP_excluded <- df_partMP_excluded %>% group_by(student_tracking_id) %>% count()
+
+write_csv(df_MP_excluded, "MP_excludedKids.csv")
+
+df_excluded_profiles <- merge(df_MP_excluded, df_ktea, by = "student_tracking_id")
+
+write_csv(df_excluded_profiles, "MP_excludedKidswithRS.csv")
+
+df_excluded_profiles$wcj_lwi_ss <- as.numeric(df_excluded_profiles$wcj_lwi_ss)
+combined_plot <- ggplot(df_excluded_profiles, aes(x = wcj_lwi_ss, color = "steelblue")) +
+  geom_histogram(alpha = 0.4, position = "identity", binwidth = 5, fill = "steelblue", color = "steelblue") +  # Adjust binwidth as needed
+  labs(
+       x = "Motion",
+       y = "Count") +
+  theme_minimal() +
+  theme(legend.position = "left") 
+
+# Display the plot
+print(combined_plot)
+```

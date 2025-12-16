@@ -1,0 +1,333 @@
+---
+title: "Fig1-FRPM"
+output: html_notebook
+---
+
+```{r}
+all_resources <- read.csv('~/all_resources.csv')
+```
+
+```{r}
+all_resources <- df_all %>% group_by(cgrade, clean_school_id) %>% mutate(across(c(ble_ucat,lnc,rao,dgs, nwr_ucat,srt_ucat,nre_ucat,wre_ucat,nwr_ucat,del_ucat,ble_ucat), as.numeric)) %>% summarize(LET_performance = median(LetAbilitySS,na.rm=TRUE),
+                                                            pse_performance = median(pseAbilitySS,na.rm=TRUE),                                                                                                                  gmc_performance = median(MPabilitySS, na.rm=TRUE),                      
+                                                            lnc_performance = median(lnc,na.rm=TRUE),
+                                                            rao_performance = median(rao,na.rm=TRUE),
+                                                            dgs_performance = median(dgs,na.rm=TRUE),
+                                                            nwr_performance = median(nwr_ucat,na.rm=TRUE),
+                                                            srt_performance = median(srt_ucat,na.rm=TRUE),
+                                                            nre_performance = median(nre_ucat,na.rm=TRUE),
+                                                            wre_performance = median(wre_ucat,na.rm=TRUE),
+                                                            nwr_performance = median(nwr_ucat,na.rm=TRUE),
+                                                            del_performance = median(del_ucat,na.rm=TRUE),
+                                                            ble_performance = median(ble_ucat,na.rm=TRUE),
+                                                            evo_performance = median(evo_ucat,na.rm=TRUE),
+                                                            reading_outcome_LW = median(wcj_lwi_ss,na.rm=TRUE),
+                                                            percent_frpm = median(Percent......Eligible.FRPM...K.12.,na.rm=TRUE))
+```
+# Subset data - CDE based FRPM 
+
+```{r}
+# Create a list to store the model objects
+set.seed(555)
+lme_models <- list()
+lme_models_2 <- list()
+# Create an empty vector to store the coefficients
+coefficients <- numeric(length(lme_models))
+se <- numeric(length(lme_models))
+# Create empty data frames to store coefficients and standard errors
+coef_data <- data.frame(Measure = character(), Coefficient = numeric(), SE = numeric(), stringsAsFactors = FALSE)
+coef_data_2 <- data.frame(Measure = character(), Coefficient = numeric(), SE = numeric(), stringsAsFactors = FALSE)
+
+
+#Zscore and Center the measures 
+all_resources$LET_performance_z <- scale(all_resources$LET_performance, center = TRUE)
+all_resources$pse_performance_z <- scale(all_resources$pse_performance, center = TRUE)
+all_resources$gmc_performance_z <- scale(all_resources$gmc_performance, center = TRUE, scale = TRUE)
+all_resources$reading_outcome_LW_z <- scale(all_resources$reading_outcome_LW, center = TRUE, scale = TRUE)
+# Z-score all variables
+all_resources$rao_performance_z <- scale(all_resources$rao_performance, center = TRUE)
+all_resources$dgs_performance_z <- scale(all_resources$dgs_performance, center = TRUE, scale = TRUE)
+all_resources$nwr_performance_z <- scale(all_resources$nwr_performance, center = TRUE, scale = TRUE)
+all_resources$srt_performance_z <- scale(all_resources$srt_performance, center = TRUE, scale = TRUE)
+all_resources$del_performance_z <- scale(all_resources$del_performance, center = TRUE, scale = TRUE)
+all_resources$lnc_performance_z <- scale(all_resources$lnc_performance, center = TRUE, scale = TRUE)
+all_resources$ble_performance_z <- scale(all_resources$ble_performance, center = TRUE, scale = TRUE)
+all_resources$nre_performance_z <- scale(all_resources$nre_performance, center = TRUE, scale = TRUE)
+all_resources$wre_performance_z <- scale(all_resources$wre_performance, center = TRUE, scale = TRUE)
+all_resources$evo_performance_z <- scale(all_resources$evo_performance, center = TRUE, scale = TRUE)
+all_resources$percent_frpm_z    <- scale(all_resources$percent_frpm, center = TRUE, scale = TRUE)
+
+# Create a list to store the outcome variables
+
+
+model_names <- c("LET_performance","pse_performance","gmc_performance",
+                                                            "reading_outcome_LW", "rao_performance", 
+                                                            "dgs_performance", 
+                                                            "nwr_performance", 
+                                                            "srt_performance", 
+                                                            "nwr_performance", 
+                                                            "del_performance"
+                                                            )
+models_onlyonegrade <- c("lnc_performance", "ble_performance",  "nre_performance", "wre_performance","evo_performance")
+outcome_vars_onlyonegrade <- c("lnc_performance_z", "ble_performance_z",  "nre_performance_z", "wre_performance_z","evo_performance_z")  
+
+# Create a list to store the outcome variables
+outcome_vars <- c("LET_performance_z","pse_performance_z","gmc_performance_z",
+                                                            "reading_outcome_LW_z", "rao_performance_z", "dgs_performance_z", "nwr_performance_z", "srt_performance_z", 
+                                                            "nwr_performance_z", 
+                                                            "del_performance_z"
+                                                            )
+
+# Loop through the outcome variables
+for (i in seq_along(outcome_vars)) {
+  # Fit the linear mixed-effects model
+  formula <- as.formula(paste0(outcome_vars[i], " ~ percent_frpm *cgrade"))
+  lme_model <- lm(formula, data = all_resources)
+  anova(lme_model)
+  # Extract coefficients and standard errors
+  aa <- summary(lme_model)
+  coef <- aa$coefficients[2, 1]  # Extract the coefficient for percent_frpm
+  se <- aa$coefficients[2, 2]  # Extract the standard error for percent_frpm
+  
+  # Append to the data frame
+  coef_data <- rbind(coef_data, data.frame(Measure = model_names[i], Coefficient = coef, SE = se, stringsAsFactors = FALSE))
+  
+  # Store the model object in the list
+  lme_models[[model_names[i]]] <- lme_model
+}
+for (j in seq_along(outcome_vars_onlyonegrade)) {
+  # Fit the linear mixed-effects model
+  formula <- as.formula(paste0(outcome_vars_onlyonegrade[j], " ~ percent_frpm +cgrade "))
+  lme_model <- lm(formula, data = all_resources)
+  anova(lme_model)
+  bb <- summary(lme_model)
+  coef <- bb$coefficients[2, 1]  # Extract the coefficient for percent_frpm
+  se <- bb$coefficients[2, 2]  # Extract the standard error for percent_frpm
+  # Append to the data frame
+  coef_data_2 <- rbind(coef_data_2, data.frame(Measure = models_onlyonegrade[j], Coefficient = coef, SE = se, stringsAsFactors = FALSE))
+  
+  # Store the model object in the list
+  lme_models_2[[models_onlyonegrade[j]]] <- lme_model
+}
+
+lme_modelCombined <- c(lme_models, lme_models_2)
+
+library(ggplot2)
+library(lme4)
+
+# Create an empty vector to store the coefficients
+coefficients <- numeric(length(lme_models))
+coefficients2 <- numeric(length(lme_models_2))
+# Create a vector of measure names
+measure_names <- names(lme_models)
+measure_names2 <- names(lme_models_2)
+
+# Combine the two data frames
+coef_data_combined <- rbind(coef_data, coef_data_2)
+
+measure_renaming <- c(
+  "LET_performance" = "MEP-L",
+  "pse_performance" = "MEP-P",
+  "gmc_performance" = "Motion",
+  "lnc_performance" = "LNC",
+  "del_performance" = "DEL",
+  "rao_performance" = "RAO",
+  "dgs_performance" = "DGS",
+  "ble_performance" = "BLE",
+  "srt_performance" = "SRT",
+  "nwr_performance" = "NWR",
+  "nre_performance" = "NRE",
+  "wre_performance" = "WRE",
+  "evo_performance" = "VOC",
+  "reading_outcome_LW" = "WJ(LWI)"
+)
+measure_order <- c("MEP-L",
+  "MEP-P",
+  "Motion",
+  "WJ(LWI)",
+  "VOC",
+   "LNC",
+   "DEL",
+  "BLE",
+   "RAO",
+  "DGS",
+   "SRT",
+   "NWR",
+   "NRE",
+   "WRE"
+)
+# Rename measure names in effect_sizes
+coef_data_combined$Measure <- recode(coef_data_combined$Measure, !!!measure_renaming)
+
+coef_data_combined$Measure <- factor(coef_data_combined$Measure, levels = unique(coef_data_combined$Measure))
+
+# Ensure correct order of measures
+coef_data_combined$Measure <- factor(coef_data_combined$Measure, levels = measure_order)
+
+
+# Plot the coefficients
+# Convert Measure to a factor variable for proper ordering on the x-axis
+
+
+ggplot(coef_data_combined, aes(x = Coefficient, y = Measure)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Add a vertical dashed line at x = 0
+  geom_pointrange(aes(xmin = Coefficient -  SE,
+                      xmax = Coefficient +  SE),
+                  size = 0.5) +  # Add point ranges (confidence intervals)
+  labs(title = "Coefficients from the model: MedianMeasure ~ FRPM (CDE data) + Grade",
+       x = "Coefficient",
+       y = "Measure") +
+  theme_bw() +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1)) 
+```
+
+EL status 
+
+```{r}
+all_resources <- read.csv("~/all_resources_EL.csv")
+#Zscore and Center the measures 
+all_resources$LET_performance_z <- scale(all_resources$LET_performance, center = TRUE)
+all_resources$pse_performance_z <- scale(all_resources$pse_performance, center = TRUE)
+all_resources$gmc_performance_z <- scale(all_resources$gmc_performance, center = TRUE, scale = TRUE)
+all_resources$reading_outcome_LW_z <- scale(all_resources$reading_outcome_LW, center = TRUE, scale = TRUE)
+# Z-score all variables
+all_resources$rao_performance_z <- scale(all_resources$rao_performance, center = TRUE)
+all_resources$dgs_performance_z <- scale(all_resources$dgs_performance, center = TRUE, scale = TRUE)
+all_resources$nwr_performance_z <- scale(all_resources$nwr_performance, center = TRUE, scale = TRUE)
+all_resources$srt_performance_z <- scale(all_resources$srt_performance, center = TRUE, scale = TRUE)
+all_resources$del_performance_z <- scale(all_resources$del_performance, center = TRUE, scale = TRUE)
+all_resources$lnc_performance_z <- scale(all_resources$lnc_performance, center = TRUE, scale = TRUE)
+all_resources$ble_performance_z <- scale(all_resources$ble_performance, center = TRUE, scale = TRUE)
+all_resources$nre_performance_z <- scale(all_resources$nre_performance, center = TRUE, scale = TRUE)
+all_resources$wre_performance_z <- scale(all_resources$wre_performance, center = TRUE, scale = TRUE)
+all_resources$evo_performance_z <- scale(all_resources$evo_performance, center = TRUE, scale = TRUE)
+```
+
+```{r}
+# Create a list to store the outcome variables
+model_names <- c("LET_performance","pse_performance","gmc_performance",
+                                                            "reading_outcome_LW", "rao_performance", 
+                                                            "dgs_performance", 
+                                                            "nwr_performance", 
+                                                            "srt_performance", 
+                                                            "nwr_performance", 
+                                                            "del_performance"
+                                                            )
+models_onlyonegrade <- c("lnc_performance", "ble_performance",  "nre_performance", "wre_performance","evo_performance")
+outcome_vars_onlyonegrade <- c("lnc_performance_z", "ble_performance_z",  "nre_performance_z", "wre_performance_z","evo_performance_z")  
+
+# Create a list to store the outcome variables
+outcome_vars <- c("LET_performance_z","pse_performance_z","gmc_performance_z",
+                                                            "reading_outcome_LW_z", "rao_performance_z", "dgs_performance_z", "nwr_performance_z", "srt_performance_z", 
+                                                            "nwr_performance_z", 
+                                                            "del_performance_z"
+                                                            )
+
+# Loop through the outcome variables
+for (i in seq_along(outcome_vars)) {
+  # Fit the linear mixed-effects model
+  formula <- as.formula(paste0(outcome_vars[i], " ~ cELStatus + grade"))
+  lme_model <- lm(formula, data = all_resources)
+  anova(lme_model)
+  # Extract coefficients and standard errors
+  aa <- summary(lme_model)
+  coef <- aa$coefficients[2, 1]  # Extract the coefficient for percent_frpm
+  se <- aa$coefficients[2, 2]  # Extract the standard error for percent_frpm
+  
+  # Append to the data frame
+  coef_data <- rbind(coef_data, data.frame(Measure = model_names[i], Coefficient = coef, SE = se, stringsAsFactors = FALSE))
+  
+  # Store the model object in the list
+  lme_models[[model_names[i]]] <- lme_model
+}
+for (j in seq_along(outcome_vars_onlyonegrade)) {
+  # Fit the linear mixed-effects model
+  formula <- as.formula(paste0(outcome_vars_onlyonegrade[j], " ~ cELStatus +grade "))
+  lme_model <- lm(formula, data = all_resources)
+  anova(lme_model)
+  bb <- summary(lme_model)
+  coef <- bb$coefficients[2, 1]  # Extract the coefficient for percent_frpm
+  se <- bb$coefficients[2, 2]  # Extract the standard error for percent_frpm
+  # Append to the data frame
+  coef_data_2 <- rbind(coef_data_2, data.frame(Measure = models_onlyonegrade[j], Coefficient = coef, SE = se, stringsAsFactors = FALSE))
+  
+  # Store the model object in the list
+  lme_models_2[[models_onlyonegrade[j]]] <- lme_model
+}
+
+lme_modelCombined <- c(lme_models, lme_models_2)
+
+library(ggplot2)
+library(lme4)
+
+# Create an empty vector to store the coefficients
+coefficients <- numeric(length(lme_models))
+coefficients2 <- numeric(length(lme_models_2))
+# Create a vector of measure names
+measure_names <- names(lme_models)
+measure_names2 <- names(lme_models_2)
+
+# Combine the two data frames
+coef_data_combined <- rbind(coef_data, coef_data_2)
+
+measure_renaming <- c(
+  "LET_performance" = "MEP-L",
+  "pse_performance" = "MEP-P",
+  "gmc_performance" = "Motion",
+  "lnc_performance" = "LNC",
+  "del_performance" = "DEL",
+  "rao_performance" = "RAO",
+  "dgs_performance" = "DGS",
+  "ble_performance" = "BLE",
+  "srt_performance" = "SRT",
+  "nwr_performance" = "NWR",
+  "nre_performance" = "NRE",
+  "wre_performance" = "WRE",
+  "evo_performance" = "VOC",
+  "reading_outcome_LW" = "WJ(LWI)"
+)
+measure_order <- c("MEP-L",
+  "MEP-P",
+  "Motion",
+  "WJ(LWI)",
+  "VOC",
+   "LNC",
+   "DEL",
+  "BLE",
+   "RAO",
+  "DGS",
+   "SRT",
+   "NWR",
+   "NRE",
+   "WRE"
+)
+# Rename measure names in effect_sizes
+coef_data_combined$Measure <- recode(coef_data_combined$Measure, !!!measure_renaming)
+
+coef_data_combined$Measure <- factor(coef_data_combined$Measure, levels = unique(coef_data_combined$Measure))
+
+# Ensure correct order of measures
+coef_data_combined$Measure <- factor(coef_data_combined$Measure, levels = measure_order)
+
+
+# Plot the coefficients
+# Convert Measure to a factor variable for proper ordering on the x-axis
+
+
+ggplot(coef_data_combined, aes(x = Coefficient, y = Measure)) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "red") +  # Add a vertical dashed line at x = 0
+  geom_pointrange(aes(xmin = Coefficient -  SE,
+                      xmax = Coefficient +  SE),
+                  size = 0.5) +  # Add point ranges (confidence intervals)
+  labs(title = "Beta Coefficients from the model: Median_Measure ~ Primary Language + Grade",
+       x = "Coefficient",
+       y = "") +
+  theme_bw() + xlim(-2,2) +
+  theme(axis.text.y = element_text(angle = 0, hjust = 1, size = 12),
+    axis.text.x = element_text(size = 12), axis.title.x = element_text(size=14),
+    axis.title = element_text(size = 14),
+    plot.title = element_text(size = 12),
+    strip.text = element_text(size = 14)) 
+
+```
+
