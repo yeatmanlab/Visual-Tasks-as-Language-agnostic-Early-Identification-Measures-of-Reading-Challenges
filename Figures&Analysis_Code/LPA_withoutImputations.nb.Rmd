@@ -1,0 +1,60 @@
+---
+title: "LPA without imputations "
+output: html_notebook
+---
+
+```{r}
+# Identify complete cases on ALL LPA input variables
+lpa_vars <- c("RVP_LT0", "RVP_PT0", "del_ucat_T0", "ble_ucat_T0",
+              "nwr_ucat_T0", "srt_ucat_T0", "dgs_T0", "rao_T0")
+
+# Use your ORIGINAL pre-imputation dataframe here
+complete_idx <- complete.cases(df_risk[, lpa_vars])
+cat("Complete cases:", sum(complete_idx), "out of 157\n")
+cat("Percentage:", round(mean(complete_idx)*100, 1), "%\n")
+
+df_complete_scaled <- as.data.frame(scale(df_complete))
+
+cat("\nProfile means on standardized variables:\n")
+means_scaled <- aggregate(df_complete_scaled,
+                         by = list(lpa_sensitivity$classification),
+                         FUN = mean)
+print(as.data.frame(means_scaled), digits = 2)
+
+# Also recheck entropy with scaled data
+set.seed(234543)
+lpa_sensitivity_scaled <- Mclust(df_complete_scaled, G = 5, modelNames = "EEI")
+cat("\nCluster sizes:\n")
+print(table(lpa_sensitivity_scaled$classification))
+
+entropy_fn <- function(p) sum(-p * log(p + 1e-10))
+entropy_scaled <- 1 - (sum(apply(lpa_sensitivity_scaled$z, 1, entropy_fn)) /
+                (nrow(lpa_sensitivity_scaled$z) * log(5)))
+cat("\nEntropy:", round(entropy_scaled, 3), "\n")
+```
+
+```{r}
+# Correlations between MEP measures and Digit Span
+# For kindergarten
+cor_mepl_dgs <- cor.test(df_subset$RVP_LT0, df_subset$dgs_T0, 
+                          use = "complete.obs")
+cor_mepp_dgs <- cor.test(df_subset$RVP_PT0, df_subset$dgs_T0, 
+                          use = "complete.obs")
+
+cat("MEP-L vs Digit Span: r =", round(cor_mepl_dgs$estimate, 3), 
+    ", p =", round(cor_mepl_dgs$p.value, 3), "\n")
+cat("MEP-P vs Digit Span: r =", round(cor_mepp_dgs$estimate, 3), 
+    ", p =", round(cor_mepp_dgs$p.value, 3), "\n")
+
+# Also run MEP vs reading outcome for context
+cor_mepl_read <- cor.test(clean_data$RVP_LT0, clean_data$WJ_LWI_T0, 
+                           use = "complete.obs")
+cor_mepp_read <- cor.test(clean_data$RVP_PT0, clean_data$WJ_LWI_T0, 
+                           use = "complete.obs")
+
+cat("MEP-L vs Reading: r =", round(cor_mepl_read$estimate, 3), 
+    ", p =", round(cor_mepl_read$p.value, 3), "\n")
+cat("MEP-P vs Reading: r =", round(cor_mepp_read$estimate, 3), 
+    ", p =", round(cor_mepp_read$p.value, 3), "\n")
+```
+
